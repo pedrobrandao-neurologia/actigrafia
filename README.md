@@ -2,7 +2,7 @@
 
 Análise e interpretação automática de actigrafia em uma única página HTML, sem instalação, sem servidor e sem envio de dados.
 
-Você abre o arquivo `.txt` exportado do ActStudio (Condor Instruments ActTrust) e recebe o actograma em dupla plotagem, os parâmetros de sono noite a noite, o dia médio de 24 h e a análise circadiana paramétrica (cosinor) e não-paramétrica (IS, IV, RA, CFI, L5, M10). Os resultados podem ser exportados em **PDF**, **JSON** e **CSV**.
+Você abre o arquivo `.txt` exportado do ActStudio (Condor Instruments ActTrust) e recebe o actograma em dupla plotagem, os parâmetros de sono noite a noite, o dia médio de 24 h, a análise circadiana paramétrica (cosinor) e não-paramétrica (IS, IV, RA, CFI, L5, M10) e uma **interpretação automatizada** que classifica cada parâmetro contra referências publicadas e sintetiza os achados. Os resultados podem ser exportados em **PDF**, **JSON** e **CSV**.
 
 > **Privacidade.** Todo o processamento acontece no navegador, em JavaScript. Nenhum byte do registro sai da máquina — não há back-end, upload, telemetria ou dependência externa. O `index.html` é autocontido e funciona offline, inclusive com duplo clique a partir do disco.
 
@@ -59,9 +59,15 @@ Alterar qualquer opção recalcula tudo instantaneamente:
 | **Número de despertares** | Sequências de vigília ≥ 1 min após o início do sono (também reportadas as ≥ 5 min) |
 | **Índice de fragmentação** | Transições sono↔vigília por hora de TST |
 
-Os episódios são detectados automaticamente: densidade de sono (média móvel de ±15 min) > 0,5, fusão de intervalos separados por < 60 min e descarte de blocos < 15 min. Em cada janela meio-dia → meio-dia, o maior bloco com ≥ 2 h é o **episódio principal (noite)**; blocos de 15–240 min são registrados como **cochilos**.
+Os episódios são detectados automaticamente: densidade de sono (média móvel de ±15 min) > 0,5; blocos separados por < 30 min são fundidos, e também os separados por até 180 min quando a atividade no intervalo permanece abaixo do limiar de repouso — assim um despertar longo dentro da cama não parte a noite em dois. Blocos < 15 min são descartados. Em cada janela meio-dia → meio-dia, o maior bloco com ≥ 2 h é o **episódio principal (noite)**; blocos de 15–240 min são registrados como **cochilos**, exceto os cortados pelas bordas do registro.
 
-Na ausência de marcador de evento, o deitar é estimado recuando até 90 min a partir do bloco de repouso enquanto a densidade local de sono permanece ≥ 0,2 — o período de acomodação, em que já há imobilidade, mas ainda intermitente. O recuo não atravessa vigília contínua > 30 min nem o episódio anterior. As exportações trazem a coluna `origem_deitar` (`evento` ou `atividade`); a estimativa por atividade é um *proxy* e tende a subestimar a latência em relação ao diário de sono.
+Na ausência de marcador de evento, o deitar é estimado recuando até 120 min a partir do bloco de repouso enquanto a atividade suavizada (média móvel de ±5 min de PIM) permanece abaixo do **limiar de repouso** — 20% da atividade média da janela M10 do próprio indivíduo, o que dispensa calibração para a escala de contagens do aparelho. As exportações trazem a coluna `origem_deitar` (`evento` ou `atividade`); a estimativa por atividade é um *proxy* e tende a subestimar a latência em relação ao diário de sono.
+
+Episódios cortados pelo início ou pelo fim do registro são marcados como **incompletos**, exibidos na tabela e excluídos de todas as médias, já que sua duração real é desconhecida.
+
+Além do índice de fragmentação por transições sono↔vigília (sem valor de referência publicado), é calculado o **índice de fragmentação no padrão Actiware** — % de épocas móveis + % de bouts imóveis de 1 min, com época móvel definida por contagens ≥ (segundos da época)/15 sobre ZCM —, que é a métrica à qual se aplica o limiar de 35 da literatura, e a **atividade motora média** (ZCM/min entre o início e o fim do sono).
+
+Horários de deitar, início, fim e meio do sono são resumidos por **média circular**, com o desvio-padrão circular do meio do sono como medida de regularidade.
 
 ### Ritmo circadiano
 
@@ -86,15 +92,57 @@ O **CFI** varia de 0 (ausência de ritmo circadiano detectável) a 1 (ritmo robu
 
 ---
 
+## Interpretação automatizada
+
+> **Não existem valores de normalidade universais em actigrafia.** Os limiares dependem do aparelho, do modo de aquisição (PIM/TAT/ZCM) e do algoritmo de escoragem, e os que este programa usa **não foram derivados com o ActTrust**. A interpretação é uma leitura orientadora que sempre acompanha a referência que aplicou e as ressalvas do caso — nunca um laudo.
+
+Cada parâmetro recebe uma classificação (**normal**, **limítrofe**, **alterado**, **descritivo** quando não há limiar publicado, ou **sem dados**), junto da referência adotada. Métricas cujo limiar existe mas não foi validado para este aparelho são marcadas como **orientador**.
+
+### Limiares de sono
+
+Critérios actigráficos quantitativos de Natale et al. (Motionlogger, 2009; Actiwatch, 2014) e limiares clínicos difundidos:
+
+| Parâmetro | Normal | Limítrofe | Alterado | Referência |
+|---|---|---|---|---|
+| TST | 7–9 h | 6–7 h ou > 9 h | < 6 h | 7–9 h em adultos; QAC considera anormal ≤ 440 min |
+| SOL | < 15 min | 15–29 min | ≥ 30 min | < 14 min (Actiwatch), < 12 min (Motionlogger); ≥ 30 min = insônia de início |
+| ES | ≥ 85% | 80–85% | < 80% | > 87% (Actiwatch), > 92% (Motionlogger) |
+| WASO | < 30 min | 30–40 min | > 40 min | < 40 min (Actiwatch), < 25 min (Motionlogger) |
+| Despertares ≥ 5 min | < 2 | — | ≥ 2 | ≥ 2 episódios é critério de anormalidade |
+| Índice de fragmentação | < 35 | — | ≥ 35 | Actiwatch |
+| Atividade motora média | < 16 ZCM/min | — | ≥ 16 | Motionlogger |
+
+### Faixas circadianas
+
+Sem cutoffs clínicos validados — são faixas típicas de coortes de adultos saudáveis, e IS e RA diminuem enquanto IV aumenta com a idade:
+
+| Parâmetro | Normal | Limítrofe | Alterado |
+|---|---|---|---|
+| IS | ≥ 0,6 | 0,4–0,6 | < 0,4 |
+| IV | < 1,0 | 1,0–1,5 | > 1,5 |
+| RA | ≥ 0,85 | 0,80–0,85 | < 0,80 |
+| Fase (meio de L5) | 01:00–05:00 | 05:00–08:00 (atraso) ou 21:00–01:00 (avanço) | horário diurno |
+| Regularidade (DP do meio do sono) | < 1 h | 1–1,5 h | > 1,5 h |
+
+CFI e os valores absolutos de L5 e M10 são apresentados como **descritivos**: o CFI não tem cutoff validado, e as contagens não são comparáveis entre aparelhos ou modos de aquisição — o que se interpreta é a direção e a evolução intraindividual. A acrofase é avaliada pela coerência com a janela M10 e pela robustez do ajuste (R²).
+
+### Achados e qualidade do registro
+
+Os itens classificados são agregados em padrões nomeados — latência prolongada, sono fragmentado, eficiência reduzida, sono curto, ritmo de repouso-atividade irregular, contraste dia-noite reduzido, desvio de fase, horários irregulares e cochilos frequentes — e sintetizados em um parágrafo.
+
+Em paralelo, o programa sinaliza o que compromete a leitura: registro abaixo dos 5–7 dias consensuais (14 dias para a latência), poucas noites completas, proporção elevada de épocas mascaradas, ausência de marcador de evento (que faz a latência ser subestimada), episódios incompletos excluídos das médias e noites partidas em episódios separados — quando o episódio principal contém menos de 70% do sono da janela de 24 h, TIB, TST e eficiência se referem apenas a ele.
+
+---
+
 ## Exportação dos resultados
 
 Botão **Exportar** na barra superior:
 
 | Formato | Conteúdo |
 |---|---|
-| **Relatório PDF** | Laudo paginado em A4: resumo do sono e do ritmo circadiano, dados do dispositivo, actograma, dia médio, tabela por episódio e notas metodológicas |
-| **JSON** | Objeto único com configuração, registro, todos os episódios, médias, métricas circadianas e as três séries do dia médio (1440 pontos cada) |
-| **CSV — noites** | Uma linha por episódio (noites e cochilos), linha de média e bloco de resumo com IS, IV, RA, CFI, L5, M10 e cosinor |
+| **Relatório PDF** | Relatório paginado em A4: resumo do sono e do ritmo circadiano, interpretação automatizada com achados e ressalvas, dados do dispositivo, actograma, dia médio, tabela por episódio e notas metodológicas |
+| **JSON** | Objeto único com configuração, registro, todos os episódios, médias, horários, métricas circadianas, a interpretação completa e as três séries do dia médio (1440 pontos cada) |
+| **CSV — noites** | Uma linha por episódio (noites e cochilos), linha de média, bloco de resumo com IS, IV, RA, CFI, L5, M10 e cosinor, e blocos com a interpretação, os padrões e as ressalvas |
 | **CSV — dia médio** | Perfil de 24 h minuto a minuto: atividade, probabilidade de sono e luz |
 | **CSV — épocas** | Registro completo época a época, com escore de sono, máscara e marcação de repouso |
 
@@ -112,6 +160,8 @@ O PDF é gerado inteiramente no navegador, sem biblioteca externa: um gerador pr
 - **Análise circadiana não-paramétrica (IS, IV, L5, M10, RA)** — Van Someren EJW, Swaab DF, Colenda CC, Cohen W, McCall WV, Rosenquist PB. Bright light therapy: improved sensitivity to its effects on rest-activity rhythms in Alzheimer patients by application of nonparametric methods. *Chronobiol Int*. 1999;16(4):505-18.
 - **Índice de função circadiana (CFI)** — Ortiz-Tudela E, Martinez-Nicolas A, Campos M, Rol MÁ, Madrid JA. A new integrated variable based on thermometry, actimetry and body position (TAP) to evaluate circadian system status in humans. *PLoS Comput Biol*. 2010;6(11):e1000996.
 - **Cosinor** — ajuste por mínimos quadrados de y = MESOR + A·cos(2π·t/24 h − φ).
+- **Critérios quantitativos actigráficos usados na interpretação** — Natale V, Plazzi G, Martoni M. Actigraphy in the assessment of insomnia: a quantitative approach. *Sleep*. 2009;32(6):767-71; e Natale V, Léger D, Martoni M, Bayon V, Erbacci A. The role of actigraphy in the assessment of primary insomnia: a retrospective study. *Sleep Med*. 2014;15(1):111-5. Derivados com Motionlogger e Actiwatch — **não com o ActTrust**.
+- **Padronização brasileira** — Consenso Brasileiro de Actigrafia, Associação Brasileira do Sono, 2021: define a fase principal de repouso (FPR) no lugar de "tempo na cama", ES = (TTS/FPR) × 100, cochilos ≥ 10 min e o mínimo de 5–7 dias de registro, sem fixar valores de normalidade.
 - **Uso clínico da actigrafia** — Smith MT, McCrae CS, Cheung J, et al. Use of actigraphy for the evaluation of sleep disorders and circadian rhythm disorders: an AASM clinical practice guideline. *J Clin Sleep Med*. 2018;14(7):1231-7.
 
 Cole-Kripke e Sadeh foram derivados contra polissonografia em actígrafos AMI; a aplicação a outros dispositivos assume comparabilidade das contagens ZCM.
@@ -121,14 +171,17 @@ Cole-Kripke e Sadeh foram derivados contra polissonografia em actígrafos AMI; a
 ## Estrutura do projeto
 
 ```
-index.html    aplicação inteira: CSS, motor de análise (CORE) e interface/exportações
+index.html    aplicação inteira: CSS, motor de análise (CORE),
+              interpretação (INTERP) e interface/exportações
 README.md
 ```
 
-O bloco `CORE` é independente do DOM (parsing, grade temporal, escoragem, detecção de episódios, cosinor, NPCRA, dia médio) e pode ser reaproveitado em Node.js ou em testes.
+Os blocos `CORE` (parsing, grade temporal, escoragem, detecção de episódios, cosinor, NPCRA, dia médio) e `INTERP` (classificação, padrões, síntese e ressalvas) são independentes do DOM e podem ser reaproveitados em Node.js ou em testes.
 
 ---
 
 ## Aviso
 
-Ferramenta de apoio à pesquisa e à leitura clínica. **Não substitui polissonografia nem julgamento médico.** A actigrafia infere sono a partir da imobilidade e tende a superestimar o tempo total de sono em sono fragmentado. Os limiares e regras de detecção descritos acima são escolhas explícitas da implementação e podem divergir de outros softwares de actigrafia — verifique-os antes de usar os resultados em pesquisa ou assistência.
+Ferramenta de apoio à pesquisa e à leitura clínica. **Não substitui polissonografia nem julgamento médico.** A actigrafia infere sono a partir da imobilidade e tende a superestimar o tempo total de sono e a eficiência e a subestimar o WASO e a latência. Os limiares e regras de detecção descritos acima são escolhas explícitas da implementação e podem divergir de outros softwares de actigrafia — verifique-os antes de usar os resultados em pesquisa ou assistência.
+
+A interpretação automatizada não é um laudo: é uma leitura estruturada dos números contra referências que **não foram validadas para este aparelho**, sem acesso ao diário de sono, à queixa, à idade, aos medicamentos ou ao contexto do paciente. A comparação intraindividual — pré e pós-tratamento, dias úteis versus dias livres — é o uso mais robusto da actigrafia, e a leitura do actograma continua sendo indispensável.

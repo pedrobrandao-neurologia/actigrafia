@@ -158,6 +158,7 @@ main{max-width:1120px; margin:0 auto; padding:28px 20px 80px}
 
 /* Cards */
 .card{
+  scroll-margin-top:72px;
   background:var(--surface-solid); border-radius:var(--r);
   box-shadow:var(--shadow); padding:20px 22px; margin-top:22px;
   border:1px solid var(--hair);
@@ -199,6 +200,37 @@ tbody tr.mean td{font-weight:700; background:color-mix(in srgb, var(--blue) 6%, 
 tbody tr.mean td:first-child{background:color-mix(in srgb, var(--blue) 6%, var(--surface-solid))}
 .badge{display:inline-block; font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:999px; vertical-align:middle}
 .badge.nap{background:color-mix(in srgb, var(--teal) 18%, transparent); color:var(--teal)}
+.badge.trunc{background:color-mix(in srgb, var(--amber) 20%, transparent); color:var(--amber)}
+
+/* Interpretação */
+.synth{font-size:.95rem; line-height:1.6; margin-top:10px}
+.pill{
+  display:inline-block; font-size:.68rem; font-weight:700; letter-spacing:.02em;
+  padding:2px 9px; border-radius:999px; white-space:nowrap;
+}
+.pill.normal{background:color-mix(in srgb, var(--green) 18%, transparent); color:var(--green)}
+.pill.limitrofe{background:color-mix(in srgb, var(--amber) 20%, transparent); color:var(--amber)}
+.pill.alterado{background:color-mix(in srgb, var(--red) 16%, transparent); color:var(--red)}
+.pill.descritivo, .pill.indeterminado{background:color-mix(in srgb, var(--text) 9%, transparent); color:var(--sec)}
+.notes-list{margin:12px 0 0; padding:0; list-style:none; display:grid; gap:8px}
+.notes-list li{
+  font-size:.85rem; line-height:1.5; padding:9px 12px; border-radius:11px;
+  background:color-mix(in srgb, var(--blue) 6%, transparent);
+  border-left:3px solid var(--blue);
+}
+.notes-list li b{font-weight:650}
+.notes-list.warn li{background:color-mix(in srgb, var(--amber) 10%, transparent); border-left-color:var(--amber)}
+#interpTable th, #interpTable td{text-align:left}
+#interpTable td.ref{white-space:normal; font-size:.76rem; color:var(--sec); min-width:280px}
+#interpTable td.par{white-space:normal}
+#interpTable{min-width:720px}
+details#interpRessalvas{margin-top:14px; font-size:.8rem; color:var(--sec)}
+details#interpRessalvas summary{cursor:pointer; font-weight:600; color:var(--blue)}
+details#interpRessalvas ul{margin:8px 0 0 18px; display:grid; gap:6px; line-height:1.5}
+.grp-row td{
+  font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+  color:var(--sec); background:color-mix(in srgb, var(--text) 4%, transparent);
+}
 
 /* Settings row */
 .settings{display:flex; gap:18px 26px; flex-wrap:wrap; align-items:center; margin-top:8px; font-size:.85rem}
@@ -316,6 +348,18 @@ tbody tr.mean td:first-child{background:color-mix(in srgb, var(--blue) 6%, var(-
     </div>
 
     <div class="metrics" id="metrics"></div>
+
+    <div class="card fade-in" id="interpCard">
+      <header>
+        <h3>Interpretação automatizada</h3>
+        <span class="sub">referências orientadoras — não substitui a leitura do actograma</span>
+      </header>
+      <p class="synth" id="interpSintese"></p>
+      <div id="interpAlertas"></div>
+      <div id="interpPadroes"></div>
+      <div class="tbl-wrap"><table id="interpTable"></table></div>
+      <details id="interpRessalvas"><summary>Ressalvas de interpretação</summary><ul></ul></details>
+    </div>
 
     <div class="card fade-in">
       <header>
@@ -509,8 +553,25 @@ function scoreSadeh(a){
   return s;
 }
 
+/* Média móvel de PIM (épocas mascaradas ignoradas), usada como sinal de
+   "quieto/em repouso" independentemente da escoragem de sono */
+function smoothAct(g, masked, halfWin){
+  const n=g.n, out=new Float64Array(n);
+  const ps=new Float64Array(n+1), pc=new Float64Array(n+1);
+  for(let i=0;i<n;i++){
+    const ok = !masked[i] && Number.isFinite(g.pim[i]);
+    ps[i+1]=ps[i]+(ok? g.pim[i]:0); pc[i+1]=pc[i]+(ok?1:0);
+  }
+  for(let i=0;i<n;i++){
+    const a=Math.max(0,i-halfWin), b=Math.min(n-1,i+halfWin);
+    const c=pc[b+1]-pc[a];
+    out[i] = c>0 ? (ps[b+1]-ps[a])/c : 0;
+  }
+  return out;
+}
+
 /* ---- Detecção de segmentos de repouso ---- */
-function detectSegments(sleep, masked, epochMin){
+function detectSegments(sleep, masked, epochMin, actS, restThr){
   const n = sleep.length;
   const H = Math.max(1, Math.round(15/epochMin));
   const ps = new Float64Array(n+1), pc = new Float64Array(n+1);
@@ -526,37 +587,37 @@ function detectSegments(sleep, masked, epochMin){
     if(above[i] && st<0) st=i;
     if((!above[i]||i===n-1) && st>=0){ raw.push([st, above[i]?i:i-1]); st=-1; }
   }
-  const gap = Math.round(60/epochMin), merged=[];
+  /* Funde blocos separados por < 30 min; e também por até 180 min quando a
+     atividade no intervalo permanece abaixo do limiar de repouso — um
+     despertar longo dentro da cama não deve partir a noite em dois. */
+  const gap = Math.round(30/epochMin), longGap = Math.round(180/epochMin), merged=[];
   for(const s of raw){
-    if(merged.length && s[0]-merged[merged.length-1][1] <= gap) merged[merged.length-1][1]=s[1];
-    else merged.push(s.slice());
+    const prev = merged[merged.length-1];
+    if(prev){
+      const g0 = s[0]-prev[1]-1;
+      let quiet = false;
+      if(g0 > gap && g0 <= longGap){
+        let sum=0, c=0;
+        for(let i=prev[1]+1;i<s[0];i++){ if(masked[i]) continue; sum+=actS[i]; c++; }
+        quiet = c===0 || sum/c < restThr;
+      }
+      if(g0 <= gap || quiet){ prev[1]=s[1]; continue; }
+    }
+    merged.push(s.slice());
   }
   const minLen = Math.round(15/epochMin);
   return merged.filter(s => s[1]-s[0]+1 >= minLen);
 }
 
 /* ---- Início do repouso ("luzes apagadas") e início do sono ---- */
-/* Recua a partir do bloco de sono enquanto a densidade local de sono ainda
-   indica imobilidade em acomodação (≥ 0,2), até 90 min, sem invadir o
-   segmento anterior. Serve de proxy de deitar quando não há marcador. */
-function restOnsetIdx(segStart, sleep, masked, epochMin, floorIdx, maxBackMin){
-  const H = Math.max(1, Math.round(15/epochMin));
-  const maxBack = Math.round((maxBackMin||90)/epochMin);
-  const n = sleep.length;
-  const dens = k => {
-    let s=0, c=0;
-    for(let j=Math.max(0,k-H); j<=Math.min(n-1,k+H); j++){ if(masked[j]) continue; s+=sleep[j]; c++; }
-    return c ? s/c : 0;
-  };
-  const maxWake = Math.max(1, Math.round(30/epochMin)); // não atravessa vigília contínua > 30 min
-  let i = segStart, run = 0;
-  while(i > floorIdx && (segStart-i) < maxBack){
-    const k = i-1;
-    if(dens(k) < 0.2) break;
-    if(!masked[k] && !sleep[k]){ if(++run > maxWake) break; }
-    else run = 0;
-    i = k;
-  }
+/* Recua a partir do bloco de sono enquanto a atividade suavizada permanece
+   abaixo do limiar de repouso — a pessoa já está deitada e quieta, ainda que
+   acordada —, até 120 min e sem invadir o segmento anterior. É o proxy de
+   "luzes apagadas" quando não há marcador de evento nem diário. */
+function restOnsetIdx(segStart, actS, epochMin, floorIdx, restThr, maxBackMin){
+  const maxBack = Math.round((maxBackMin||120)/epochMin);
+  let i = segStart;
+  while(i > floorIdx && (segStart-i) < maxBack && actS[i-1] < restThr) i--;
   return i;
 }
 /* Primeiro bloco sustentado de 10 min de sono (≤ 1 época de vigília) */
@@ -577,24 +638,28 @@ function sleepOnsetIdx(from, to, sleep, masked, epochMin){
 /* Converte segmentos escorados em intervalos [deitar → fim] com início do sono.
    Um marcador de evento (botão) até 180 min antes do início do sono tem
    prioridade sobre a estimativa por atividade. */
-function buildIntervals(segments, sleep, masked, g){
+function buildIntervals(segments, sleep, masked, g, actS, restThr){
   const back = Math.round(180/g.epochMin);
   return segments.map((seg, k) => {
     const floor = k>0 ? segments[k-1][1]+1 : 0;
-    const rest = restOnsetIdx(seg[0], sleep, masked, g.epochMin, floor);
+    const rest = restOnsetIdx(seg[0], actS, g.epochMin, floor, restThr);
     let onset = sleepOnsetIdx(rest, seg[1], sleep, masked, g.epochMin);
     let a = rest, src = 'atividade';
     let ev = -1;
     for(let i=Math.max(floor, onset-back); i<=onset; i++) if(g.event[i]) ev = i;
     if(ev >= 0 && ev < onset){ a = ev; src = 'evento'; }
     if(onset < a) onset = a;
-    return {a, b:seg[1], onset, solSource:src, seg};
+    return {a, b:seg[1], onset, solSource:src, seg, truncated: a===0 || seg[1]===g.n-1};
   });
 }
 
-function segMetrics(iv, sleep, masked, epochMin){
+function segMetrics(iv, sleep, masked, epochMin, act){
   const {a, b, onset} = iv;
   let tst=0, mk=0, trans=0, awak1=0, awak5=0, prev=null, wakeRun=0, validPost=0, sleepPost=0;
+  /* índice de fragmentação no padrão Actiware: % de épocas móveis +
+     % de bouts imóveis de 1 min; época móvel se contagens ≥ segundos/15 */
+  const mobThr = (epochMin*60)/15;
+  let mobile=0, actSum=0, bouts=0, bouts1=0, immRun=0;
   for(let i=a;i<=b;i++){
     if(masked[i]){ mk++; continue; }
     const s = sleep[i];
@@ -605,24 +670,45 @@ function segMetrics(iv, sleep, masked, epochMin){
       if(s){ if(wakeRun>0){ awak1++; if(wakeRun*epochMin>=5) awak5++; wakeRun=0; } }
       else wakeRun++;
       prev = s;
+      const v = act && Number.isFinite(act[i]) ? act[i] : 0;
+      actSum += v;
+      if(v >= mobThr){ mobile++; if(immRun>0){ bouts++; if(immRun*epochMin<=1) bouts1++; immRun=0; } }
+      else immRun++;
     }
   }
+  if(immRun>0){ bouts++; if(immRun*epochMin<=1) bouts1++; }
   const tibMin = (b-a+1)*epochMin, tstMin = tst*epochMin, mkMin = mk*epochMin;
   const validMin = tibMin - mkMin;
   return {
-    a, b, onset, solSource: iv.solSource,
+    a, b, onset, solSource: iv.solSource, truncated: !!iv.truncated,
     tibMin, tstMin, solMin:(onset-a)*epochMin,
     wasoMin: Math.max(0, (validPost - sleepPost)*epochMin),
     se: validMin>0 ? tstMin/validMin : 0,
     awakenings: awak1, awakenings5: awak5,
     fragIndex: tstMin>0 ? trans/(tstMin/60) : 0,
+    fragMob: validPost>0 ? 100*mobile/validPost + (bouts>0 ? 100*bouts1/bouts : 0) : null,
+    actMean: validPost>0 ? (actSum/validPost)/epochMin : null,
     maskedMin: mkMin
   };
 }
 
+/* ---- Estatística circular para horários (minuto do dia) ---- */
+function circStats(mins){
+  const n = mins.length;
+  if(!n) return null;
+  const w = 2*Math.PI/1440;
+  let sx=0, sy=0;
+  for(const m of mins){ sx+=Math.cos(w*m); sy+=Math.sin(w*m); }
+  const R = Math.hypot(sx,sy)/n;
+  let mean = Math.atan2(sy/n, sx/n)/w;
+  mean = ((mean%1440)+1440)%1440;
+  return {mean, sd: R>0 ? Math.sqrt(-2*Math.log(R))/w : null, R, n};
+}
+
 /* Episódio principal por janela meio-dia → meio-dia */
+const noonWin = t => { const d = new Date(t); const base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12); return t >= base ? base : base - 86400000; };
 function assignNights(intervals, g){
-  const noon = t => { const d = new Date(t); const base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12); return t >= base ? base : base - 86400000; };
+  const noon = noonWin;
   const len = iv => iv.seg[1]-iv.seg[0]+1;
   const byWin = new Map();
   for(const iv of intervals){
@@ -640,7 +726,9 @@ function assignNights(intervals, g){
     for(const iv of list){
       if(iv===main) continue;
       const dur=len(iv)*g.epochMin;
-      if(dur>=15 && dur<=240) naps.push({win:w, iv});
+      /* blocos cortados pelo início/fim do registro não são caracterizáveis
+         como cochilo — sua duração real é desconhecida */
+      if(dur>=15 && dur<=240 && iv.a>0 && iv.b<g.n-1) naps.push({win:w, iv});
     }
   }
   return {nights, naps};
@@ -772,22 +860,53 @@ function analyze(g, opts){
   const masked = maskArray(g, opts.maskTemp, opts.thr);
   const zcm = activityFor(g, masked, 'zcm');
   const sleep = opts.algo==='sadeh' ? scoreSadeh(zcm) : scoreColeKripke(zcm);
-  const segments = detectSegments(sleep, masked, g.epochMin);
-  const intervals = buildIntervals(segments, sleep, masked, g);
+  /* limiar de repouso: 20% da atividade média da janela M10 do próprio
+     indivíduo — separa "deitado e quieto" de vigília ativa sem depender da
+     escala de contagens do aparelho */
+  const profAct0 = minuteProfile(g, masked, g.pim);
+  const lm = l5m10(profAct0);
+  const restThr = Math.max(1, 0.2*(lm.M10||0));
+  const actS = smoothAct(g, masked, Math.max(1, Math.round(5/g.epochMin)));
+  const segments = detectSegments(sleep, masked, g.epochMin, actS, restThr);
+  const intervals = buildIntervals(segments, sleep, masked, g, actS, restThr);
   const {nights, naps} = assignNights(intervals, g);
-  const nightMetrics = nights.map(nt => ({...nt, m: segMetrics(nt.iv, sleep, masked, g.epochMin)}));
-  const napMetrics = naps.map(np => ({...np, m: segMetrics(np.iv, sleep, masked, g.epochMin)}));
+  const sleepByWin = new Map();
+  for(let i=0;i<g.n;i++){
+    if(masked[i] || !sleep[i]) continue;
+    const w = noonWin(g.t0 + i*g.epoch*1000);
+    sleepByWin.set(w, (sleepByWin.get(w)||0) + g.epochMin);
+  }
+  const nightMetrics = nights.map(nt => {
+    const m = segMetrics(nt.iv, sleep, masked, g.epochMin, zcm);
+    const winSleepMin = sleepByWin.get(nt.win) || 0;
+    /* o episódio principal deveria conter quase todo o sono da janela de 24 h;
+       se não contém, a noite está partida em episódios separados */
+    m.winSleepMin = winSleepMin;
+    m.split = winSleepMin > 0 && m.tstMin < 0.7*winSleepMin;
+    return {...nt, m};
+  });
+  const napMetrics = naps.map(np => ({...np, m: segMetrics(np.iv, sleep, masked, g.epochMin, zcm)}));
+  /* médias e horários usam apenas noites completas (não cortadas pelas
+     bordas do registro), que teriam TIB/TST/SOL subestimados */
+  const full = nightMetrics.filter(x=>!x.m.truncated);
+  const clockMin = i => Math.floor(((g.t0 + i*g.epoch*1000)/MIN) % 1440);
+  const schedule = {
+    onset: circStats(full.map(x=>clockMin(x.m.onset))),
+    offset: circStats(full.map(x=>clockMin(x.m.b+1))),
+    mid: circStats(full.map(x=>clockMin(Math.round((x.m.onset+x.m.b+1)/2)))),
+    bed: circStats(full.map(x=>clockMin(x.m.a)))
+  };
   const cos = cosinor(g, masked);
   const np = isiv(g, masked);
   const sleepF = Float64Array.from(sleep);
-  const profAct = minuteProfile(g, masked, g.pim);
+  const profAct = profAct0;
   const profLight = minuteProfile(g, masked, g.light);
   const profSleep = minuteProfile(g, masked, sleepF);
-  const lm = l5m10(profAct);
   let unmasked=0; for(let i=0;i<g.n;i++) if(!masked[i]) unmasked++;
-  return {masked, sleep, segments, intervals, nights:nightMetrics, naps:napMetrics,
+  return {masked, sleep, segments, intervals, nights:nightMetrics, nightsFull:full, naps:napMetrics,
     cosinor:cos, npcra:{...np, ...lm, cfi: cfiFrom(np.is, np.iv, lm.RA)},
-    profAct, profLight, profSleep,
+    profAct, profLight, profSleep, schedule,
+    maskedFraction: g.n ? 1 - unmasked/g.n : 1,
     daysRecorded: unmasked*g.epochMin/1440,
     spanDays: g.n*g.epochMin/1440};
 }
@@ -801,20 +920,47 @@ function demoText(){
     'TAT_THRESHOLD : 1024\nMODE : PIM/TAT/ZCM\nINTERVAL : 60\n'+
     '+-------------------------------------------------------+\n'+
     'DATE/TIME;MS;EVENT;TEMPERATURE;EXT TEMPERATURE;ORIENTATION;PIM;PIMn;TAT;TATn;ZCM;ZCMn;LIGHT;AMB LIGHT;RED LIGHT;GREEN LIGHT;BLUE LIGHT;IR LIGHT;UVA LIGHT;UVB LIGHT;STATE\n';
+  const DAYS = 8;
+  /* Cada noite tem horário de deitar, de levantar, latência e 1–2 despertares
+     longos — em vez de ruído independente por minuto, que produziria um sono
+     absurdamente fragmentado. */
+  const nights = {};
+  for(let n=-1;n<DAYS;n++){
+    const bed = 23.2 + (rnd()-0.5)*1.1;
+    const rise = 7.0 + (rnd()-0.5)*0.9;
+    const lat = (7 + rnd()*15)/60;
+    const dur = rise + 24 - bed;
+    const aw = [];
+    const k = rnd()<0.45 ? 2 : 1;
+    for(let j=0;j<k;j++) aw.push({at:(bed + lat + 0.8 + rnd()*(dur-2.2))%24, len:(4+rnd()*9)/60});
+    nights[n] = {bed, rise, lat, aw, evt: rnd()<0.45};
+  }
+  const stateAt = (day,h) => {
+    const N = nights[h<12 ? day-1 : day];
+    if(!N) return 'wake';
+    if(h>=12){
+      if(h < N.bed) return 'wake';
+      if(h < N.bed + N.lat) return 'settle';
+    } else if(h >= N.rise) return 'wake';
+    for(const a of N.aw)
+      if((a.at>=12)===(h>=12) && h>=a.at && h<a.at+a.len) return 'awake';
+    return 'sleep';
+  };
   const start=Date.UTC(2026,2,2,0,0,0); // 02/03/2026
-  for(let i=0;i<8*1440;i++){
+  for(let i=0;i<DAYS*1440;i++){
     const t=start+i*60000, d=new Date(t);
     const mm=((t/60000)%1440+1440)%1440, h=mm/60;
     const day=Math.floor(i/1440);
-    const bed=23.4+ (rnd()-0.5)*0.8, rise=7.1+(rnd()-0.5)*0.6;
-    const asleep = (h>=bed || h<rise);
-    const nap = (day%3===1 && h>=14.2 && h<14.9);
+    const st = stateAt(day,h);
+    const nap = (day%3===1 && h>=14.25 && h<14.85);
     let zcm, pim, tat;
-    if(asleep||nap){
-      const burst = rnd()<0.04;                       // breve despertar/movimento
-      zcm = burst? Math.round(15+rnd()*60) : (rnd()<0.15? Math.round(rnd()*2):0);
-      pim = burst? Math.round(400+rnd()*2500) : Math.round(rnd()*60);
-      tat = burst? Math.round(60+rnd()*300) : Math.round(rnd()*8);
+    if(st==='sleep' || nap){
+      zcm = rnd()<0.06 ? 1+Math.round(rnd()*3) : 0;
+      pim = Math.round(rnd()*45); tat = Math.round(rnd()*6);
+    } else if(st==='settle'){
+      zcm = Math.round(2+rnd()*13); pim = Math.round(150+rnd()*850); tat = Math.round(15+rnd()*85);
+    } else if(st==='awake'){
+      zcm = Math.round(20+rnd()*70); pim = Math.round(600+rnd()*3000); tat = Math.round(80+rnd()*350);
     } else {
       const shape = 0.55+0.45*Math.sin((h-13)/24*2*Math.PI+1.2);
       const act = 40+shape*180*(0.6+rnd()) + (rnd()<0.05? 250*rnd():0);
@@ -822,16 +968,241 @@ function demoText(){
     }
     const off = (day===3 && h>=10 && h<11.2);
     if(off){ zcm=0; pim=0; tat=0; }
-    const temp = off? 24.1+rnd()*0.8 : (asleep? 34.2:32.6)+(rnd()-0.5)*0.6;
-    const light = off? 120 : (asleep||nap? (rnd()<0.05? 8:0.2) : (h>6.5&&h<18? 300+900*rnd() : 40+80*rnd()));
-    out+=`${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00;0;${(day===2&&mm===1374)?1:0};${temp.toFixed(2)};27.00;0;${pim};0;${tat};0;${zcm};0;${light.toFixed(2)};0.00;0.00;0.00;0.00;0.00;0.00;0.00;0\n`;
+    const dormindo = st!=='wake' || nap;
+    const temp = off? 24.1+rnd()*0.8 : (dormindo? 34.2:32.6)+(rnd()-0.5)*0.6;
+    const light = off? 120 : (dormindo? (rnd()<0.05? 8:0.2) : (h>6.5&&h<18? 300+900*rnd() : 40+80*rnd()));
+    /* marcador de evento no "luzes apagadas" das noites em que o voluntário
+       lembrou de apertar o botão */
+    const Nb = nights[day];
+    const evt = (Nb && Nb.evt && h>=12 && Math.abs(h-Nb.bed)*60 < 0.5) ? 1 : 0;
+    out+=`${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00;0;${evt};${temp.toFixed(2)};27.00;0;${pim};0;${tat};0;${zcm};0;${light.toFixed(2)};0.00;0.00;0.00;0.00;0.00;0.00;0.00;0\n`;
   }
   return out;
 }
 
-return {parseActTrust, buildGrid, analyze, demoText, minuteProfile};
+return {parseActTrust, buildGrid, analyze, demoText, minuteProfile, circStats};
 })();
 /* ==================== FIM CORE ==================== */
+
+/* ==================== FORMATAÇÃO (compartilhada) ==================== */
+const fmt = {
+  hm(min){ if(min==null||!isFinite(min)) return '—'; const t=Math.round(min), h=Math.floor(t/60), m=t%60; return h>0? `${h}h${String(m).padStart(2,'0')}` : `${m} min`; },
+  clock(min){ if(min==null||!isFinite(min)) return '—'; min=((min%1440)+1440)%1440; return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(Math.round(min%60)).padStart(2,'0')}`; },
+  clockT(t){ const d=new Date(t); return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; },
+  date(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}`; },
+  dateFull(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`; },
+  pct(x){ return x==null? '—' : (100*x).toFixed(1).replace('.',',')+'%'; },
+  n(x,d=2){ return (x==null||!isFinite(x))? '—' : x.toFixed(d).replace('.',','); }
+};
+
+/* ==================== INTERPRETAÇÃO AUTOMATIZADA ====================
+   Regras orientadoras, não normativas. Os limiares quantitativos de sono
+   vêm dos critérios actigráficos de Natale et al. (Motionlogger 2009,
+   Actiwatch 2014) e dos limiares clínicos difundidos; os circadianos, de
+   faixas típicas de coortes saudáveis (Van Someren; NHANES). Nenhum foi
+   validado para o ActTrust — ver ressalvas geradas junto do laudo.     */
+const INTERP = (() => {
+'use strict';
+const NORMAL='normal', LIMIT='limitrofe', ALT='alterado', DESC='descritivo', ND='indeterminado';
+const inWin = (x,a,b) => {
+  const w=v=>((v%1440)+1440)%1440;
+  x=w(x); a=w(a); b=w(b);
+  return a<=b ? (x>=a && x<b) : (x>=a || x<b);
+};
+const it = o => ({nota:null, orientativo:false, ...o});
+
+function build(res, cfg){
+  const N = res.nightsFull.map(x=>x.m);
+  const nN = N.length;
+  const nTrunc = res.nights.length - nN;
+  const avg = k => { const v=N.map(m=>m[k]).filter(x=>x!=null&&isFinite(x)); return v.length? v.reduce((a,b)=>a+b,0)/v.length : null; };
+  const np = res.npcra, cos = res.cosinor, sch = res.schedule;
+  const itens = [], padroes = [], ressalvas = [], alertas = [];
+
+  /* ---------- qualidade do registro ---------- */
+  const dias = res.daysRecorded;
+  const comEvento = N.filter(m=>m.solSource==='evento').length;
+  const qualidade = {
+    dias, noites:nN, cochilos:res.naps.length,
+    mascarado: res.maskedFraction,
+    noitesComEvento: comEvento,
+    suficiente: dias>=5 && nN>=3
+  };
+  if(dias < 5) alertas.push(`Registro de ${fmt.n(dias,1)} dias válidos, abaixo do mínimo consensual de 5–7 dias (14 dias são necessários para estimativa confiável da latência).`);
+  else if(dias < 7) alertas.push(`Registro de ${fmt.n(dias,1)} dias válidos: aceitável (mínimo de 5–7 dias), porém 14 dias são preferíveis, sobretudo para a latência.`);
+  if(nN < 3) alertas.push(`Apenas ${nN} noite(s) completa(s) com episódio principal detectado — as médias por noite têm baixa estabilidade.`);
+  if(nTrunc) alertas.push(`${nTrunc} episódio(s) cortado(s) pelo início ou pelo fim do registro foram excluídos das médias, por terem duração subestimada.`);
+  const nSplit = N.filter(m=>m.split).length;
+  if(nSplit) alertas.push(`Em ${nSplit} noite(s) o episódio principal contém menos de 70% do sono detectado na janela de 24 h: a noite está partida em episódios separados por períodos de atividade elevada (saída da cama). TIB, TST e eficiência referem-se apenas ao episódio principal — confira o actograma.`);
+  if(res.maskedFraction > 0.10) alertas.push(`${fmt.pct(res.maskedFraction)} das épocas foram mascaradas (off-wrist ou lacuna) e excluídas dos cálculos.`);
+  if(nN && comEvento === 0) alertas.push('Nenhuma noite tem marcador de evento: o horário de deitar foi estimado por atividade e a latência tende a ser subestimada.');
+  else if(nN && comEvento < nN) alertas.push(`${comEvento} de ${nN} noites têm marcador de evento; nas demais o deitar foi estimado por atividade.`);
+
+  /* ---------- parâmetros de sono ---------- */
+  const tst = avg('tstMin'), tstR = tst==null? null : Math.round(tst);
+  itens.push(it({grupo:'sono', chave:'TST', rotulo:'Tempo total de sono (TST)', bruto:tst, valor:fmt.hm(tst),
+    status: tstR==null? ND : tstR<360? ALT : tstR<420? LIMIT : tstR<=540? NORMAL : LIMIT,
+    ref:'7–9 h em adultos (7–8 h em idosos); os critérios actigráficos quantitativos consideram anormal TST ≤ 440 min',
+    nota: tst!=null && tst>540 ? 'Acima da faixa recomendada — verifique se o período de repouso não está superestimado.' : null}));
+
+  const sol = avg('solMin'), solR = sol==null? null : Math.round(sol);
+  itens.push(it({grupo:'sono', chave:'SOL', rotulo:'Latência de sono (SOL)', bruto:sol, valor:fmt.hm(sol),
+    status: solR==null? ND : solR<15? NORMAL : solR<30? LIMIT : ALT,
+    ref:'< 14 min (Actiwatch) e < 12 min (Motionlogger) nos critérios de Natale; ≥ 30 min é o limiar clínico usual de insônia de início',
+    nota: comEvento<nN ? 'Nem todas as noites têm marcador de evento; sem diário de sono, a actigrafia tende a subestimar a latência.' : null}));
+
+  const se = avg('se');
+  itens.push(it({grupo:'sono', chave:'ES', rotulo:'Eficiência de sono (ES)', bruto:se, valor:fmt.pct(se),
+    status: se==null? ND : se>=0.85? NORMAL : se>=0.80? LIMIT : ALT,
+    ref:'> 87% (Actiwatch) e > 92% (Motionlogger) nos critérios de Natale; ≥ 85% é o limiar clínico difundido',
+    nota:'Em adultos saudáveis brasileiros a ES actigráfica média foi 80,6 ± 6,7% — a ES por actigrafia costuma ser menor que a polissonográfica.'}));
+
+  const waso = avg('wasoMin'), wasoR = waso==null? null : Math.round(waso);
+  itens.push(it({grupo:'sono', chave:'WASO', rotulo:'Vigília após início do sono (WASO)', bruto:waso, valor:fmt.hm(waso),
+    status: wasoR==null? ND : wasoR<30? NORMAL : wasoR<=40? LIMIT : ALT,
+    ref:'< 40 min (Actiwatch) e < 25 min (Motionlogger) nos critérios de Natale'}));
+
+  const aw5 = avg('awakenings5');
+  itens.push(it({grupo:'sono', chave:'DESP5', rotulo:'Despertares ≥ 5 min por noite', bruto:aw5, valor:fmt.n(aw5,1),
+    status: aw5==null? ND : aw5<2? NORMAL : ALT,
+    ref:'≥ 2 episódios de vigília de 5 min por noite é critério de anormalidade nos critérios de Natale'}));
+
+  const fmob = avg('fragMob');
+  itens.push(it({grupo:'sono', chave:'FI', rotulo:'Índice de fragmentação (mobilidade)', bruto:fmob, valor:fmt.n(fmob,1),
+    status: fmob==null? ND : fmob<35? NORMAL : ALT, orientativo:true,
+    ref:'< 35 nos critérios de Natale (Actiwatch)',
+    nota:'Calculado no padrão Actiware (% de épocas móveis + % de bouts imóveis de 1 min) sobre ZCM; o limiar de mobilidade depende da escala de contagens do aparelho.'}));
+
+  const am = avg('actMean');
+  itens.push(it({grupo:'sono', chave:'ATIV', rotulo:'Atividade motora média no sono', bruto:am, valor:fmt.n(am,1)+' ZCM/min',
+    status: am==null? ND : am<16? NORMAL : ALT, orientativo:true,
+    ref:'< 16 movimentos/min nos critérios de Natale (Motionlogger, ZCM)',
+    nota:'Contagens não são diretamente comparáveis entre aparelhos.'}));
+
+  const frag = avg('fragIndex');
+  itens.push(it({grupo:'sono', chave:'TRANS', rotulo:'Transições sono↔vigília por hora', bruto:frag, valor:fmt.n(frag,1),
+    status: DESC, ref:'sem valor de referência publicado — usar para comparação intraindividual'}));
+
+  /* ---------- ritmo circadiano ---------- */
+  itens.push(it({grupo:'circadiano', chave:'IS', rotulo:'Estabilidade interdiária (IS)', bruto:np.is, valor:fmt.n(np.is),
+    status: np.is==null? ND : np.is>=0.6? NORMAL : np.is>=0.4? LIMIT : ALT, orientativo:true,
+    ref:'escala 0–1; sem cutoff clínico validado — ~0,6 é típico de adultos saudáveis e valores menores indicam pior acoplamento aos sincronizadores',
+    nota:'IS diminui com a idade.'}));
+
+  itens.push(it({grupo:'circadiano', chave:'IV', rotulo:'Variabilidade intradiária (IV)', bruto:np.iv, valor:fmt.n(np.iv),
+    status: np.iv==null? ND : np.iv<1? NORMAL : np.iv<=1.5? LIMIT : ALT, orientativo:true,
+    ref:'escala 0–2; sem cutoff clínico validado — em saudáveis fica bem abaixo de 1 e valores ≥ 1 sugerem ritmo fragmentado',
+    nota:'IV aumenta com a idade e é maior em doenças neurodegenerativas.'}));
+
+  itens.push(it({grupo:'circadiano', chave:'RA', rotulo:'Amplitude relativa (RA)', bruto:np.RA, valor:fmt.n(np.RA),
+    status: np.RA==null? ND : np.RA>=0.85? NORMAL : np.RA>=0.80? LIMIT : ALT, orientativo:true,
+    ref:'escala 0–1; sem cutoff clínico validado — em saudáveis geralmente ≥ 0,85–0,90, e valores maiores associam-se a menor risco cardiometabólico',
+    nota:'RA diminui com a idade.'}));
+
+  itens.push(it({grupo:'circadiano', chave:'CFI', rotulo:'Índice de função circadiana (CFI)', bruto:np.cfi, valor:fmt.n(np.cfi),
+    status: DESC,
+    ref:'escala 0–1, sem cutoff validado; composto de IS, IV normalizado e RA',
+    nota: np.cfi==null? null : np.cfi>=0.7? 'Compatível com ritmo robusto.' : np.cfi>=0.5? 'Ritmo de robustez intermediária.' : 'Ritmo pouco robusto — interpretar junto de IS, IV e RA.'}));
+
+  itens.push(it({grupo:'circadiano', chave:'L5M10', rotulo:'L5 / M10 (contagens)',
+    bruto:{L5:np.L5, M10:np.M10}, valor:`${fmt.n(np.L5,0)} / ${fmt.n(np.M10,0)}`,
+    status: DESC,
+    ref:'valores absolutos não são comparáveis entre aparelhos ou modos de aquisição — interpretar a direção e a evolução intraindividual',
+    nota:'L5 elevado indica movimento no período de repouso (sono fragmentado); M10 reduzido indica menor atividade na vigília.'}));
+
+  const midL5 = np.L5onset==null? null : (np.L5onset+150)%1440;
+  let statusFase = ND, notaFase = null;
+  if(midL5!=null){
+    if(inWin(midL5, 60, 300)){ statusFase=NORMAL; notaFase='Meio de L5 na madrugada, compatível com fase convencional.'; }
+    else if(inWin(midL5, 300, 480)){ statusFase=LIMIT; notaFase='Meio de L5 deslocado para o fim da madrugada/manhã — sugere atraso de fase.'; }
+    else if(inWin(midL5, 1260, 60)){ statusFase=LIMIT; notaFase='Meio de L5 antes de 01:00 — sugere avanço de fase.'; }
+    else { statusFase=ALT; notaFase='Meio de L5 em horário diurno — padrão atípico (inversão, trabalho noturno ou ritmo irregular).'; }
+  }
+  itens.push(it({grupo:'circadiano', chave:'FASE', rotulo:'Marcador de fase (meio de L5)', bruto:midL5, valor:fmt.clock(midL5),
+    status:statusFase, orientativo:true, nota:notaFase,
+    ref:'o início e o ponto médio de L5 e de M10 são usados como marcadores de fase; L5 tipicamente ocorre na madrugada'}));
+
+  let statusAcro = ND, notaAcro = null;
+  if(cos && np.M10onset!=null){
+    const coerente = inWin(cos.acroMin, np.M10onset, np.M10onset+600);
+    statusAcro = coerente ? NORMAL : LIMIT;
+    notaAcro = (coerente ? 'Acrofase dentro da janela M10, coerente com o período de vigília ativa.'
+                         : 'Acrofase fora da janela M10 — reveja o actograma antes de interpretar.')
+      + (cos.r2 < 0.2 ? ' Ajuste cosinor fraco (R² < 0,20): o ritmo pode não ser bem descrito por uma cossenoide de 24 h.' : '');
+  }
+  itens.push(it({grupo:'circadiano', chave:'ACRO', rotulo:'Acrofase (cosinor)', bruto:cos? cos.acroMin : null,
+    valor: cos? fmt.clock(cos.acroMin) : '—', status:statusAcro, orientativo:true, nota:notaAcro,
+    ref:'sem valores normativos; avalia-se a coerência com o período de vigília e a robustez do ajuste (R²)'}));
+
+  /* ---------- horários e regularidade ---------- */
+  const sdMid = sch && sch.mid ? sch.mid.sd : null;
+  itens.push(it({grupo:'horarios', chave:'MEIOSONO', rotulo:'Meio do sono (média)',
+    bruto: sch&&sch.mid? sch.mid.mean : null, valor: sch&&sch.mid? fmt.clock(sch.mid.mean) : '—',
+    status: DESC, ref:'marcador de cronotipo; interpretar junto do horário habitual do paciente'}));
+  itens.push(it({grupo:'horarios', chave:'REGULAR', rotulo:'Regularidade do meio do sono (DP)',
+    bruto: sdMid, valor: sdMid==null? '—' : fmt.hm(sdMid),
+    status: nN<3||sdMid==null? ND : sdMid<60? NORMAL : sdMid<=90? LIMIT : ALT, orientativo:true,
+    ref:'sem cutoff validado; desvio-padrão circular > 1 h indica horários irregulares',
+    nota:'Comparar dias úteis e dias livres quando o registro permitir.'}));
+
+  /* ---------- padrões ---------- */
+  const alterados = itens.filter(i=>i.status===ALT).map(i=>i.rotulo);
+  const limitrofes = itens.filter(i=>i.status===LIMIT).map(i=>i.rotulo);
+  const st = k => (itens.find(i=>i.chave===k)||{}).status;
+  const alt = k => st(k)===ALT, lim = k => st(k)===LIMIT;
+  const push = (t, x) => padroes.push({titulo:t, texto:x});
+
+  if(alt('SOL'))
+    push('Latência de sono prolongada', `SOL média de ${fmt.hm(sol)}, acima do limiar clínico de 30 min — compatível com dificuldade de iniciar o sono.`);
+  if(alt('WASO') || alt('DESP5') || alt('FI'))
+    push('Sono fragmentado / dificuldade de manutenção', `WASO de ${fmt.hm(waso)}, ${fmt.n(aw5,1)} despertares ≥ 5 min por noite e índice de fragmentação de ${fmt.n(fmob,1)}.`);
+  if(alt('ES'))
+    push('Eficiência de sono reduzida', `ES média de ${fmt.pct(se)}, abaixo de 80%.`);
+  if(tst!=null && tst<360)
+    push('Tempo de sono curto', `TST médio de ${fmt.hm(tst)}, abaixo de 6 h — considerar sono insuficiente ou restrição de sono, sobretudo se a ES estiver preservada.`);
+  if(alt('IS') || (lim('IS') && (alt('IV')||alt('RA'))) || (alt('IV') && alt('RA')))
+    push('Ritmo de repouso-atividade irregular', `IS ${fmt.n(np.is)}, IV ${fmt.n(np.iv)} e RA ${fmt.n(np.RA)} indicam menor estabilidade entre os dias, maior fragmentação intradiária e/ou menor contraste dia-noite.`);
+  else if(alt('RA'))
+    push('Contraste dia-noite reduzido', `RA de ${fmt.n(np.RA)} — atividade diurna reduzida, repouso noturno agitado, ou ambos.`);
+  if(statusFase!==NORMAL && statusFase!==ND)
+    push('Possível desvio de fase', `${notaFase} Meio do sono às ${sch&&sch.mid? fmt.clock(sch.mid.mean):'—'}.`);
+  if(st('REGULAR')===ALT)
+    push('Horários irregulares', `Desvio-padrão do meio do sono de ${fmt.hm(sdMid)} entre as noites.`);
+  if(nN && res.naps.length/Math.max(1,nN) >= 0.5)
+    push('Cochilos frequentes', `${res.naps.length} episódios secundários de sono em ${nN} dias — podem reduzir a pressão de sono noturna.`);
+  if(!padroes.length && nN){
+    if(limitrofes.length)
+      push('Sem alterações francas', `Nenhum parâmetro ficou fora da faixa de referência adotada, mas ${limitrofes.length===1?'ficou limítrofe':'ficaram limítrofes'}: ${limitrofes.join(', ')}.`);
+    else
+      push('Sem desvios relevantes', 'Os parâmetros de sono e as métricas circadianas ficaram dentro das faixas de referência adotadas.');
+  }
+
+  /* ---------- síntese ---------- */
+  let sintese = `Registro de ${fmt.n(dias,1)} dias válidos com ${nN} noite(s) completa(s) analisada(s)`;
+  sintese += res.naps.length? ` e ${res.naps.length} cochilo(s). ` : '. ';
+  if(nN){
+    sintese += `Em média: TST ${fmt.hm(tst)}, latência ${fmt.hm(sol)}, WASO ${fmt.hm(waso)}, eficiência ${fmt.pct(se)} e ${fmt.n(aw5,1)} despertares ≥ 5 min por noite. `;
+    sintese += `Ritmo circadiano com IS ${fmt.n(np.is)}, IV ${fmt.n(np.iv)}, RA ${fmt.n(np.RA)} e CFI ${fmt.n(np.cfi)}. `;
+  } else {
+    sintese += 'Nenhum episódio principal de sono foi detectado, de modo que os parâmetros de sono não puderam ser calculados. ';
+  }
+  sintese += alterados.length ? `Fora da faixa de referência: ${alterados.join(', ')}.` : 'Nenhum parâmetro ficou fora da faixa de referência adotada.';
+  if(limitrofes.length) sintese += ` Limítrofes: ${limitrofes.join(', ')}.`;
+
+  /* ---------- ressalvas ---------- */
+  ressalvas.push('Não existem valores de normalidade universais em actigrafia: os limiares dependem do aparelho, do modo de aquisição (PIM/TAT/ZCM) e do algoritmo de escoragem. Os limiares de sono usados aqui derivam dos critérios actigráficos quantitativos de Natale et al. (Motionlogger, 2009; Actiwatch, 2014) e não foram validados para o ActTrust — servem como referência orientadora.');
+  ressalvas.push('As métricas circadianas não paramétricas (IS, IV, RA) não têm cutoffs clínicos validados; as faixas adotadas vêm de coortes de adultos saudáveis. IS e RA diminuem e IV aumenta com a idade, de modo que a interpretação deve considerar a faixa etária.');
+  ressalvas.push('O Consenso Brasileiro de Actigrafia (ABS, 2021) padroniza as definições (fase principal de repouso, ES = TTS/FPR, cochilos ≥ 10 min, mínimo de 5–7 dias de registro), mas deliberadamente não fixa valores de normalidade.');
+  ressalvas.push('A comparação intraindividual (pré e pós-tratamento, dias úteis versus dias livres) é o uso mais robusto da actigrafia — priorize-a sobre a comparação com limiares populacionais.');
+  ressalvas.push('A actigrafia infere sono a partir da imobilidade: tende a superestimar TST e ES e a subestimar WASO e latência em relação à polissonografia.');
+  ressalvas.push(`Escoragem por ${cfg.algo==='ck'?'Cole-Kripke':'Sadeh'} sobre ZCM, épocas de ${cfg.epochMin} min. Interpretação automatizada de apoio — não substitui a leitura do actograma nem o julgamento clínico.`);
+
+  return {qualidade, alertas, itens, padroes, sintese, ressalvas,
+    contagem:{alterado:alterados.length, limitrofe:limitrofes.length,
+      normal:itens.filter(i=>i.status===NORMAL).length}};
+}
+return {build, NORMAL, LIMIT, ALT, DESC, ND};
+})();
 </script>
 
 <script>
@@ -842,16 +1213,6 @@ const $ = s => document.querySelector(s);
 const MIN = 60000;
 const state = { grid:null, meta:null, res:null, fileName:'',
   algo:'ck', chan:'pim', maskTemp:true, thr:25, showLight:true };
-
-const fmt = {
-  hm(min){ if(min==null||!isFinite(min)) return '—'; const h=Math.floor(min/60), m=Math.round(min%60); return h>0? `${h}h${String(m).padStart(2,'0')}` : `${m} min`; },
-  clock(min){ if(min==null||!isFinite(min)) return '—'; min=((min%1440)+1440)%1440; return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(Math.round(min%60)).padStart(2,'0')}`; },
-  clockT(t){ const d=new Date(t); return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; },
-  date(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}`; },
-  dateFull(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`; },
-  pct(x){ return x==null? '—' : (100*x).toFixed(1).replace('.',',')+'%'; },
-  n(x,d=2){ return (x==null||!isFinite(x))? '—' : x.toFixed(d).replace('.',','); }
-};
 /* Paleta clara fixa, usada ao renderizar gráficos para PNG/PDF (fundo branco) */
 const LIGHT_PALETTE = {
   '--text':'#1D1D1F', '--sec':'#6E6E73', '--ter':'#AEAEB2',
@@ -876,9 +1237,9 @@ const METHODS = [
   ['Escoragem sono-vigília',
    'Aplicada ao canal ZCM em épocas de 1 min: Cole-Kripke (janela de 7 min; sono se D &lt; 1; Cole et al., <i>Sleep</i> 1992) ou Sadeh (janela de 11 min, contagens truncadas em 300; sono se PS ≥ 0; Sadeh et al., <i>Sleep</i> 1994). Ambos foram derivados contra PSG em actígrafos AMI; a aplicação a outros dispositivos assume comparabilidade das contagens ZCM.'],
   ['Períodos de repouso',
-   'Detecção automática: densidade de sono (média móvel de ±15 min) &gt; 0,5, fusão de intervalos separados por &lt; 60 min e exclusão de blocos &lt; 15 min. O maior bloco (≥ 2 h) de cada janela meio-dia→meio-dia é o episódio principal; blocos de 15–240 min são cochilos.'],
+   'Detecção automática: densidade de sono (média móvel de ±15 min) &gt; 0,5; blocos separados por &lt; 30 min são fundidos, e também os separados por até 180 min quando a atividade no intervalo permanece abaixo do limiar de repouso (um despertar longo dentro da cama não parte a noite em dois); blocos &lt; 15 min são descartados. O maior bloco (≥ 2 h) de cada janela meio-dia→meio-dia é o episódio principal; blocos de 15–240 min são cochilos, exceto os cortados pelas bordas do registro, cuja duração real é desconhecida. Quando o episódio principal contém menos de 70% do sono da janela de 24 h, a interpretação sinaliza que a noite está partida.'],
   ['Deitar e latência de sono (SOL)',
-   'O horário de deitar ("luzes apagadas") vem do marcador de evento do actígrafo quando existe um até 180 min antes do início do sono; na ausência dele, é estimado recuando até 90 min a partir do bloco de repouso enquanto a densidade local de sono permanece ≥ 0,2 (período de acomodação, com imobilidade ainda intermitente), sem atravessar vigília contínua &gt; 30 min nem o episódio anterior. O início do sono é a primeira janela de 10 min com no máximo 1 época de vigília. SOL = início do sono − deitar. A coluna "origem" nas exportações indica se o deitar veio de <i>evento</i> ou de <i>atividade</i>; a estimativa por atividade é um proxy e tende a subestimar a latência em relação ao diário de sono.'],
+   'O horário de deitar ("luzes apagadas") vem do marcador de evento do actígrafo quando existe um até 180 min antes do início do sono; na ausência dele, é estimado recuando até 120 min a partir do bloco de repouso enquanto a atividade suavizada (média móvel de ±5 min de PIM) permanece abaixo do limiar de repouso, sem invadir o episódio anterior. O limiar de repouso é 20% da atividade média da janela M10 do próprio indivíduo, o que o torna independente da escala de contagens do aparelho. O início do sono é a primeira janela de 10 min com no máximo 1 época de vigília. SOL = início do sono − deitar. A coluna "origem" nas exportações indica se o deitar veio de <i>evento</i> ou de <i>atividade</i>; a estimativa por atividade é um proxy e tende a subestimar a latência em relação ao diário de sono.'],
   ['Parâmetros por episódio',
    'TIB = deitar → fim do episódio; TST = épocas escoradas como sono no TIB; WASO = vigília entre o início do sono e o fim do episódio; ES = TST/TIB (excluídas épocas mascaradas); despertares = sequências de vigília ≥ 1 min (≥ 5 min entre parênteses) após o início do sono; fragmentação = transições sono↔vigília por hora de TST.'],
   ['Dia médio',
@@ -889,6 +1250,12 @@ const METHODS = [
    'Van Someren et al., 1999. IS (estabilidade interdiária) e IV (variabilidade intradiária) calculados sobre médias horárias de PIM; L5 e M10 por janelas móveis circulares de 5 h e 10 h sobre o dia médio por minuto, com os respectivos horários de início; RA = (M10−L5)/(M10+L5). Requer ≥ 3 dias completos para interpretação confiável (≥ 48 h válidas para o cálculo de IS/IV).'],
   ['Índice de função circadiana (CFI)',
    'Ortiz-Tudela et al., <i>PLoS Comput Biol</i> 2010. CFI = média aritmética de IS, do IV normalizado [(2 − IV)/2] e de RA, cada termo limitado ao intervalo 0–1. Varia de 0 (ausência de ritmo circadiano detectável) a 1 (ritmo robusto e estável). Só é reportado quando IS, IV e RA estão todos disponíveis.'],
+  ['Interpretação automatizada',
+   'Cada parâmetro é classificado como normal, limítrofe ou alterado por regras fixas, e os achados são agregados em padrões (latência prolongada, sono fragmentado, eficiência reduzida, sono curto, ritmo irregular, desvio de fase, horários irregulares, cochilos frequentes). Os limiares de sono seguem os critérios actigráficos quantitativos de Natale et al. (Motionlogger, 2009: SOL &lt; 12 min, ES &gt; 92%, WASO &lt; 25 min; Actiwatch, 2014: SOL &lt; 14 min, ES &gt; 87%, WASO &lt; 40 min, &lt; 2 despertares ≥ 5 min, índice de fragmentação &lt; 35, atividade média &lt; 16 movimentos/min) e os limiares clínicos difundidos (TST 7–9 h, ES ≥ 85%, SOL ≥ 30 min para insônia de início). As faixas circadianas (IS ≈ 0,6, IV &lt; 1, RA ≥ 0,85) vêm de coortes de adultos saudáveis e não são cutoffs clínicos validados. <b>Nenhum desses limiares foi derivado com o ActTrust</b> — são referências orientadoras, e a comparação intraindividual é sempre mais robusta.'],
+  ['Índice de fragmentação e atividade motora',
+   'Além das transições sono↔vigília por hora de TST (sem valor de referência publicado), é calculado o índice de fragmentação no padrão Actiware — porcentagem de épocas móveis somada à porcentagem de bouts imóveis de 1 min, com época móvel definida por contagens ≥ (segundos da época)/15 sobre ZCM —, que é a métrica a que se aplica o limiar de 35. A atividade motora média é a média de ZCM por minuto entre o início e o fim do sono.'],
+  ['Horários e regularidade',
+   'Deitar, início, fim e meio do sono são resumidos por média circular; a regularidade é o desvio-padrão circular do meio do sono entre as noites. O ponto médio de L5 (início de L5 + 2 h 30) é usado como marcador de fase.'],
   ['Off-wrist',
    'Épocas com temperatura cutânea abaixo do limiar (ajustável) ou lacunas de registro são mascaradas e excluídas das análises.'],
   ['Aviso',
@@ -928,12 +1295,13 @@ function loadFile(file){
 function recompute(){
   if(!state.grid) return;
   state.res = CORE.analyze(state.grid, {algo:state.algo, maskTemp:state.maskTemp, thr:state.thr});
-  renderMetrics(); renderNights(); renderMeta(); drawActogram(); drawProfile();
+  state.interp = INTERP.build(state.res, {algo:state.algo, epochMin:state.grid.epochMin});
+  renderMetrics(); renderInterp(); renderNights(); renderMeta(); drawActogram(); drawProfile();
 }
 
 function renderMetrics(){
   const {res, grid} = state;
-  const N = res.nights.map(n=>n.m);
+  const N = res.nightsFull.map(n=>n.m);
   const avg = k => N.length? N.reduce((a,m)=>a+m[k],0)/N.length : null;
   const seAvg = N.length? N.reduce((a,m)=>a+m.se,0)/N.length : null;
   const few = res.daysRecorded < 3;
@@ -965,6 +1333,36 @@ function renderMetrics(){
   $('#nightsSub').textContent = res.daysRecorded<3 ? '⚠︎ registro < 3 dias — IS/IV e médias têm baixa confiabilidade (AASM recomenda 72 h–14 dias)' : 'episódio principal por janela meio-dia → meio-dia';
 }
 
+const esc = s => String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const STATUS_LABEL = {normal:'normal', limitrofe:'limítrofe', alterado:'alterado',
+  descritivo:'descritivo', indeterminado:'sem dados'};
+const GRUPO_LABEL = {sono:'Parâmetros de sono', circadiano:'Ritmo circadiano', horarios:'Horários e regularidade'};
+
+function renderInterp(){
+  const I = state.interp;
+  $('#interpSintese').textContent = I.sintese;
+  $('#interpAlertas').innerHTML = I.alertas.length
+    ? `<ul class="notes-list warn">${I.alertas.map(a=>`<li>${esc(a)}</li>`).join('')}</ul>` : '';
+  $('#interpPadroes').innerHTML = I.padroes.length
+    ? `<ul class="notes-list">${I.padroes.map(p=>`<li><b>${esc(p.titulo)}</b> — ${esc(p.texto)}</li>`).join('')}</ul>` : '';
+
+  let rows='';
+  for(const g of ['sono','circadiano','horarios']){
+    const list = I.itens.filter(i=>i.grupo===g);
+    if(!list.length) continue;
+    rows += `<tr class="grp-row"><td colspan="4">${GRUPO_LABEL[g]}</td></tr>`;
+    rows += list.map(i=>`<tr>
+      <td class="par">${esc(i.rotulo)}</td>
+      <td>${esc(i.valor)}</td>
+      <td><span class="pill ${i.status}">${STATUS_LABEL[i.status]}</span>${i.orientativo?' <span class="pill descritivo" title="limiar orientador, sem validação para este aparelho">orientador</span>':''}</td>
+      <td class="ref">${esc(i.ref)}${i.nota?` <em>${esc(i.nota)}</em>`:''}</td>
+    </tr>`).join('');
+  }
+  $('#interpTable').innerHTML =
+    `<thead><tr><th>Parâmetro</th><th>Valor</th><th>Classificação</th><th>Referência adotada</th></tr></thead><tbody>${rows}</tbody>`;
+  $('#interpRessalvas').querySelector('ul').innerHTML = I.ressalvas.map(r=>`<li>${esc(r)}</li>`).join('');
+}
+
 const tAt = i => state.grid.t0 + i*state.grid.epoch*1000;
 
 function renderNights(){
@@ -972,7 +1370,7 @@ function renderNights(){
   const rows = res.nights.map(nt=>{
     const m=nt.m;
     return `<tr>
-      <td>${fmt.date(tAt(m.a))} → ${fmt.date(tAt(m.b+1))}</td>
+      <td>${fmt.date(tAt(m.a))} → ${fmt.date(tAt(m.b+1))}${m.truncated?' <span class="badge trunc">incompleta</span>':''}</td>
       <td>${fmt.clockT(tAt(m.a))}${m.solSource==='evento'?' <span class="badge nap">evento</span>':''}</td>
       <td>${fmt.clockT(tAt(m.onset))}</td><td>${fmt.clockT(tAt(m.b+1))}</td>
       <td>${fmt.hm(m.solMin)}</td>
@@ -981,10 +1379,10 @@ function renderNights(){
       <td>${m.awakenings} (${m.awakenings5})</td>
       <td>${fmt.n(m.fragIndex,1)}</td></tr>`;
   });
-  const N=res.nights.map(n=>n.m);
+  const N=res.nightsFull.map(n=>n.m);
   if(N.length){
     const avg=k=>N.reduce((a,m)=>a+m[k],0)/N.length;
-    rows.push(`<tr class="mean"><td>Média (${N.length} noites)</td><td>—</td><td>—</td><td>—</td>
+    rows.push(`<tr class="mean"><td>Média (${N.length} noite${N.length>1?'s':''} completa${N.length>1?'s':''})</td><td>—</td><td>—</td><td>—</td>
       <td>${fmt.hm(avg('solMin'))}</td>
       <td>${fmt.hm(avg('tibMin'))}</td><td>${fmt.hm(avg('tstMin'))}</td>
       <td>${fmt.hm(avg('wasoMin'))}</td><td>${fmt.pct(avg('se'))}</td>
@@ -1249,18 +1647,19 @@ const avgOf = (list,k) => list.length ? list.reduce((a,x)=>a+x.m[k],0)/list.leng
 
 /* Objeto único de resultados — base do JSON e do PDF */
 function resultsPayload(){
-  const {res, grid, meta} = state;
-  const c=res.cosinor, n=res.npcra;
+  const {res, grid, meta, interp:I} = state;
+  const c=res.cosinor, n=res.npcra, sch=res.schedule;
   const nightsM = res.nights, napsM = res.naps;
+  const fullM = res.nightsFull;
   const ep = m => ({
     deitar: isoAt(m.a), inicio_sono: isoAt(m.onset), fim: isoAt(m.b+1),
-    origem_deitar: m.solSource,
+    origem_deitar: m.solSource, incompleto: !!m.truncated,
     latencia_sono_min: r3(m.solMin), TIB_min: r3(m.tibMin), TST_min: r3(m.tstMin),
     WASO_min: r3(m.wasoMin), eficiencia_sono: r3(m.se),
     despertares_1min: m.awakenings, despertares_5min: m.awakenings5,
     fragmentacao_por_hora: r3(m.fragIndex), mascarado_min: r3(m.maskedMin)
   });
-  const medias = k => r3(avgOf(nightsM,k));
+  const medias = k => r3(avgOf(fullM,k));
   return {
     programa: {nome:APP.name, versao:APP.version, gerado_em:new Date().toISOString()},
     arquivo: state.fileName || null,
@@ -1298,6 +1697,34 @@ function resultsPayload(){
       },
       cosinor: c ? {MESOR_log10:r3(c.mesor), amplitude_log10:r3(c.amp), acrofase:fmt.clock(c.acroMin), R2:r3(c.r2)} : null
     },
+    horarios: sch ? {
+      deitar_medio: sch.bed? fmt.clock(sch.bed.mean):null,
+      inicio_sono_medio: sch.onset? fmt.clock(sch.onset.mean):null,
+      fim_sono_medio: sch.offset? fmt.clock(sch.offset.mean):null,
+      meio_do_sono_medio: sch.mid? fmt.clock(sch.mid.mean):null,
+      dp_circular_min: {
+        deitar: sch.bed? r3(sch.bed.sd):null, inicio_sono: sch.onset? r3(sch.onset.sd):null,
+        fim_sono: sch.offset? r3(sch.offset.sd):null, meio_do_sono: sch.mid? r3(sch.mid.sd):null
+      }
+    } : null,
+    interpretacao: {
+      aviso:'Classificações orientadoras; os limiares não foram validados para o ActTrust. Ver o campo ressalvas.',
+      sintese: I.sintese,
+      qualidade_do_registro: {
+        dias_validos: r3(I.qualidade.dias), noites: I.qualidade.noites, cochilos: I.qualidade.cochilos,
+        fracao_mascarada: r3(I.qualidade.mascarado), noites_com_marcador_de_evento: I.qualidade.noitesComEvento,
+        duracao_suficiente: I.qualidade.suficiente
+      },
+      alertas: I.alertas,
+      contagem: I.contagem,
+      itens: I.itens.map(x=>({
+        grupo:x.grupo, chave:x.chave, parametro:x.rotulo, valor:x.valor,
+        bruto: typeof x.bruto==='number'? r3(x.bruto) : x.bruto,
+        classificacao:x.status, limiar_orientador:x.orientativo, referencia:x.ref, nota:x.nota
+      })),
+      padroes: I.padroes,
+      ressalvas: I.ressalvas
+    },
     dia_medio: {
       unidade:'média por minuto do dia (0 = 00:00)',
       minuto: Array.from({length:1440},(_,m)=>m),
@@ -1316,23 +1743,32 @@ function exportJSON(){
 function csvNights(){
   const {res}=state; const sep=';';
   const num = (x,d=2) => (x==null||!isFinite(x)) ? '' : x.toFixed(d).replace('.',',');
-  let out='tipo;data;deitar;inicio_sono;fim;origem_deitar;SOL_min;TIB_min;TST_min;WASO_min;eficiencia;despertares_1min;despertares_5min;fragmentacao_h;mascarado_min\n';
+  let out='tipo;data;deitar;inicio_sono;fim;origem_deitar;incompleto;SOL_min;TIB_min;TST_min;WASO_min;eficiencia;despertares_1min;despertares_5min;fragmentacao_h;mascarado_min\n';
   const row=(tipo,x)=>{const m=x.m;
     return [tipo, fmt.dateFull(tAt(m.a)), fmt.clockT(tAt(m.a)), fmt.clockT(tAt(m.onset)), fmt.clockT(tAt(m.b+1)),
-      m.solSource, num(m.solMin,0), num(m.tibMin,0), num(m.tstMin,0), num(m.wasoMin,0), num(m.se,3),
+      m.solSource, m.truncated?'sim':'nao', num(m.solMin,0), num(m.tibMin,0), num(m.tstMin,0), num(m.wasoMin,0), num(m.se,3),
       m.awakenings, m.awakenings5, num(m.fragIndex), num(m.maskedMin,0)].join(sep)+'\n';};
   res.nights.forEach(x=>out+=row('noite',x));
   res.naps.forEach(x=>out+=row('cochilo',x));
-  const A=k=>num(avgOf(res.nights,k), k==='se'?3:(k==='fragIndex'?2:0));
-  if(res.nights.length)
-    out+=['media', '', '', '', '', '', A('solMin'), A('tibMin'), A('tstMin'), A('wasoMin'), A('se'),
-      num(avgOf(res.nights,'awakenings'),1), num(avgOf(res.nights,'awakenings5'),1), A('fragIndex'), ''].join(sep)+'\n';
+  const A=k=>num(avgOf(res.nightsFull,k), k==='se'?3:(k==='fragIndex'?2:0));
+  if(res.nightsFull.length)
+    out+=['media', '', '', '', '', '', '', A('solMin'), A('tibMin'), A('tstMin'), A('wasoMin'), A('se'),
+      num(avgOf(res.nightsFull,'awakenings'),1), num(avgOf(res.nightsFull,'awakenings5'),1), A('fragIndex'), ''].join(sep)+'\n';
   const c=res.cosinor, n=res.npcra;
   out+='\nresumo;valor\n';
   out+=`arquivo;${state.fileName}\nalgoritmo;${algoName()}\nepoca_min;${state.grid.epochMin}\n`;
   out+=`dias_registrados;${num(res.daysRecorded)}\nIS;${num(n.is,3)}\nIV;${num(n.iv,3)}\nRA;${num(n.RA,3)}\nCFI;${num(n.cfi,3)}\n`;
   out+=`L5;${num(n.L5,1)}\nL5_inicio;${fmt.clock(n.L5onset)}\nM10;${num(n.M10,1)}\nM10_inicio;${fmt.clock(n.M10onset)}\n`;
   if(c) out+=`MESOR_log10;${num(c.mesor,4)}\namplitude_log10;${num(c.amp,4)}\nacrofase;${fmt.clock(c.acroMin)}\nR2;${num(c.r2,3)}\n`;
+  const I=state.interp, q=csv=>`"${String(csv==null?'':csv).replace(/"/g,'""')}"`;
+  out+='\ninterpretacao;valor;classificacao;limiar_orientador;referencia;nota\n';
+  I.itens.forEach(x=>out+=[q(x.rotulo), q(x.valor), x.status, x.orientativo?'sim':'nao', q(x.ref), q(x.nota)].join(sep)+'\n');
+  out+='\npadrao;descricao\n';
+  I.padroes.forEach(p=>out+=`${q(p.titulo)};${q(p.texto)}\n`);
+  out+='\nsintese\n'+q(I.sintese)+'\n';
+  if(I.alertas.length){ out+='\nalerta\n'; I.alertas.forEach(a=>out+=q(a)+'\n'); }
+  out+='\nressalva\n';
+  I.ressalvas.forEach(r=>out+=q(r)+'\n');
   download(baseName()+'_noites.csv', out);
   toast('CSV de noites exportado.');
 }
@@ -1415,13 +1851,19 @@ const PDF = (() => {
       doc.ensure(46); doc.gap(8);
       doc.text(t,{size:12.5, bold:true}); doc.y+=15; doc.rule('0.80 0.82 0.85'); doc.y+=9;
     };
+    const wrapLines = (s, maxW, size, bold) => {
+      const words=clean(s).split(/\s+/).filter(Boolean); const lines=[]; let ln='';
+      for(const wd of words){ const t=ln? ln+' '+wd : wd; if(ln && wOf(t,size,bold)>maxW){ lines.push(ln); ln=wd; } else ln=t; }
+      if(ln) lines.push(ln);
+      return lines.length? lines : [''];
+    };
     doc.para = (s,o={}) => {
       const size=o.size||8.6, lead=o.lead||size*1.42, maxW=(o.maxW||PW-M.l-M.r);
-      const words=clean(s).split(/\s+/); let ln='';
-      const lines=[];
-      for(const wd of words){ const t=ln? ln+' '+wd : wd; if(ln && wOf(t,size,o.bold)>maxW){ lines.push(ln); ln=wd; } else ln=t; }
-      if(ln) lines.push(ln);
-      for(const L of lines){ doc.ensure(lead); doc.text(L,{size, bold:o.bold, color:o.color||GREY}); doc.y+=lead; }
+      for(const L of wrapLines(s, maxW, size, o.bold)){
+        doc.ensure(lead);
+        doc.text(L,{size, bold:o.bold, color:o.color||GREY});
+        doc.y+=lead;
+      }
     };
     doc.kv = (pairs,o={}) => {
       const cols=o.cols||2, colW=(PW-M.l-M.r)/cols, size=o.size||8.8, rowH=o.rowH||15.5;
@@ -1439,30 +1881,36 @@ const PDF = (() => {
       }
     };
     doc.table = (cols, rows, o={}) => {
-      const size=o.size||7.3, hp=4, rowH=o.rowH||13.5;
+      const size=o.size||7.3, hp=4, baseH=o.rowH||13.5, lead=size*1.25;
+      const wrapCols=new Set(o.wrap||[]);
       const total=cols.reduce((a,c)=>a+c.w,0);
       const head=()=>{
-        doc.ensure(rowH*2);
-        doc.rect(M.l, doc.y, total, rowH, '0.93 0.94 0.96');
+        doc.ensure(baseH*2);
+        doc.rect(M.l, doc.y, total, baseH, '0.93 0.94 0.96');
         let x=M.l;
         cols.forEach(c=>{
           const rt=c.align==='right';
           doc.text(c.t,{x: rt? x+c.w-hp : x+hp, y:doc.y+3.4, size:size-0.3, bold:true, align:rt?'right':'left', color:GREY});
           x+=c.w;
         });
-        doc.y+=rowH;
+        doc.y+=baseH;
       };
       head();
       rows.forEach(r=>{
         const arr=Array.isArray(r);
         const cells=arr? r : r.cells, fill=arr? null : r.fill, bold=arr? false : !!r.bold;
+        const lines=cells.map((cell,i)=> wrapCols.has(i) && cols[i]
+          ? wrapLines(cell, cols[i].w-2*hp, size, bold) : [String(cell==null?'':cell)]);
+        const nl=Math.max(...lines.map(l=>l.length));
+        const rowH=Math.max(baseH, nl*lead + 5);
         if(doc.y+rowH > PH-M.b){ doc.newPage(); head(); }
         if(fill) doc.rect(M.l, doc.y, total, rowH, fill);
         let x=M.l;
-        cells.forEach((cell,i)=>{
+        lines.forEach((ls,i)=>{
           const c=cols[i]; if(!c) return;
           const rt=c.align==='right';
-          doc.text(cell,{x: rt? x+c.w-hp : x+hp, y:doc.y+3.5, size, bold});
+          ls.forEach((L,k)=> doc.text(L,{x: rt? x+c.w-hp : x+hp, y:doc.y+3.5+k*lead,
+            size, bold, align: rt?'right':'left'}));
           x+=c.w;
         });
         doc.line(M.l, doc.y+rowH, M.l+total, doc.y+rowH, '0.90 0.91 0.93', 0.4);
@@ -1555,16 +2003,21 @@ function exportPDF(){
   doc.section('Sono — médias do período');
   doc.kv([
     ['Dias registrados', fmt.n(res.daysRecorded,1)],
-    ['Noites analisadas', String(res.nights.length)],
+    ['Noites analisadas', String(res.nights.length) + (res.nights.length>res.nightsFull.length ? ` (${res.nightsFull.length} completas)` : '')],
     ['Cochilos detectados', String(res.naps.length)],
-    ['Tempo na cama (TIB)', fmt.hm(avgOf(res.nights,'tibMin'))],
-    ['Tempo total de sono (TST)', fmt.hm(avgOf(res.nights,'tstMin'))],
-    ['Latência de sono (SOL)', fmt.hm(avgOf(res.nights,'solMin'))],
-    ['Eficiência de sono', fmt.pct(avgOf(res.nights,'se'))],
-    ['WASO', fmt.hm(avgOf(res.nights,'wasoMin'))],
-    ['Despertares ≥ 1 min', fmt.n(avgOf(res.nights,'awakenings'),1)],
-    ['Despertares ≥ 5 min', fmt.n(avgOf(res.nights,'awakenings5'),1)],
-    ['Índice de fragmentação', res.nights.length ? fmt.n(avgOf(res.nights,'fragIndex'),1)+' /h' : '—']
+    ['Tempo na cama (TIB)', fmt.hm(avgOf(res.nightsFull,'tibMin'))],
+    ['Tempo total de sono (TST)', fmt.hm(avgOf(res.nightsFull,'tstMin'))],
+    ['Latência de sono (SOL)', fmt.hm(avgOf(res.nightsFull,'solMin'))],
+    ['Eficiência de sono', fmt.pct(avgOf(res.nightsFull,'se'))],
+    ['WASO', fmt.hm(avgOf(res.nightsFull,'wasoMin'))],
+    ['Despertares ≥ 1 min', fmt.n(avgOf(res.nightsFull,'awakenings'),1)],
+    ['Despertares ≥ 5 min', fmt.n(avgOf(res.nightsFull,'awakenings5'),1)],
+    ['Índice de fragmentação', res.nightsFull.length ? fmt.n(avgOf(res.nightsFull,'fragIndex'),1)+' /h' : '—'],
+    ['Deitar médio', res.schedule.bed ? fmt.clock(res.schedule.bed.mean) : '—'],
+    ['Início do sono médio', res.schedule.onset ? fmt.clock(res.schedule.onset.mean) : '—'],
+    ['Fim do sono médio', res.schedule.offset ? fmt.clock(res.schedule.offset.mean) : '—'],
+    ['Meio do sono médio', res.schedule.mid ? fmt.clock(res.schedule.mid.mean) : '—'],
+    ['Regularidade do meio do sono', res.schedule.mid && res.schedule.mid.sd!=null ? '± '+fmt.hm(res.schedule.mid.sd) : '—']
   ]);
 
   doc.section('Ritmo circadiano');
@@ -1587,6 +2040,39 @@ function exportPDF(){
     doc.para('Atenção: registro com menos de 3 dias válidos — IS, IV, CFI e as médias por noite têm baixa confiabilidade (a AASM recomenda 72 h a 14 dias de registro).',{size:8.4,bold:true,color:'0.70 0.42 0.00'});
   }
 
+  /* ---- interpretação automatizada ---- */
+  const I = state.interp;
+  doc.section('Interpretação automatizada');
+  doc.para(I.sintese, {size:9, color:'0.11 0.11 0.13', lead:13});
+  doc.gap(6);
+  if(I.alertas.length){
+    doc.text('Qualidade do registro',{size:8.8,bold:true}); doc.y+=12;
+    I.alertas.forEach(a=>{ doc.para('• '+a, {size:8.4}); });
+    doc.gap(4);
+  }
+  if(I.padroes.length){
+    doc.text('Achados',{size:8.8,bold:true}); doc.y+=12;
+    I.padroes.forEach(p=>{
+      doc.ensure(26);
+      doc.text('• '+p.titulo,{size:8.4,bold:true}); doc.y+=11;
+      doc.para(p.texto,{size:8.4});
+    });
+    doc.gap(4);
+  }
+  const STL={normal:'normal', limitrofe:'limítrofe', alterado:'ALTERADO', descritivo:'descritivo', indeterminado:'sem dados'};
+  const icols=[{t:'Parâmetro',w:150},{t:'Valor',w:70,align:'right'},{t:'Classificação',w:74},{t:'Referência adotada',w:180}];
+  for(const g of ['sono','circadiano','horarios']){
+    const list=I.itens.filter(x=>x.grupo===g); if(!list.length) continue;
+    doc.ensure(40); doc.gap(4);
+    doc.text({sono:'Parâmetros de sono', circadiano:'Ritmo circadiano', horarios:'Horários e regularidade'}[g],{size:8.8,bold:true});
+    doc.y+=13;
+    doc.table(icols, list.map(x=>[x.rotulo, x.valor, STL[x.status]+(x.orientativo?' (orient.)':''), x.ref]),
+      {rowH:11, wrap:[0,3], size:6.8});
+  }
+  doc.gap(6);
+  doc.text('Ressalvas de interpretação',{size:8.8,bold:true}); doc.y+=12;
+  I.ressalvas.forEach(r=>doc.para('• '+r,{size:8}));
+
   const meta = state.meta||{};
   const nice = {DEVICE_MODEL:'Modelo',DEVICE_ID:'ID do dispositivo',FIRMWARE_VERSION:'Firmware',SOFTWARE_VERSION:'ActStudio',MODE:'Modo',INTERVAL:'Intervalo (s)',TAT_THRESHOLD:'Limiar TAT',DATE_TIME:'Exportado em'};
   const metaPairs = Object.keys(nice).filter(k=>meta[k]).map(k=>[nice[k], String(meta[k])]);
@@ -1603,21 +2089,21 @@ function exportPDF(){
 
   doc.newPage();
   doc.section('Parâmetros de sono por episódio');
-  const cols=[{t:'Episódio',w:74},{t:'Deitar',w:38,align:'right'},{t:'Sono',w:38,align:'right'},{t:'Fim',w:38,align:'right'},
-    {t:'SOL',w:40,align:'right'},{t:'TIB',w:44,align:'right'},{t:'TST',w:44,align:'right'},{t:'WASO',w:44,align:'right'},
-    {t:'ES',w:40,align:'right'},{t:'Desp.',w:38,align:'right'},{t:'Frag./h',w:38,align:'right'}];
+  const cols=[{t:'Episódio',w:92},{t:'Deitar',w:36,align:'right'},{t:'Sono',w:36,align:'right'},{t:'Fim',w:36,align:'right'},
+    {t:'SOL',w:40,align:'right'},{t:'TIB',w:42,align:'right'},{t:'TST',w:42,align:'right'},{t:'WASO',w:42,align:'right'},
+    {t:'ES',w:40,align:'right'},{t:'Desp.',w:38,align:'right'},{t:'Frag./h',w:36,align:'right'}];
   const line = (label,m) => [label, fmt.clockT(tAt(m.a)), fmt.clockT(tAt(m.onset)), fmt.clockT(tAt(m.b+1)),
     fmt.hm(m.solMin), fmt.hm(m.tibMin), fmt.hm(m.tstMin), fmt.hm(m.wasoMin), fmt.pct(m.se),
     `${m.awakenings} (${m.awakenings5})`, fmt.n(m.fragIndex,1)];
-  const rows = res.nights.map(x=>line(fmt.date(tAt(x.m.a))+' → '+fmt.date(tAt(x.m.b+1)), x.m));
-  if(res.nights.length){
-    const A=k=>avgOf(res.nights,k);
-    rows.push({bold:true, fill:'0.94 0.96 1.00', cells:[`Média (${res.nights.length} noites)`,'—','—','—',
+  const rows = res.nights.map(x=>line(fmt.date(tAt(x.m.a))+' → '+fmt.date(tAt(x.m.b+1))+(x.m.truncated?' (incompleta)':''), x.m));
+  if(res.nightsFull.length){
+    const A=k=>avgOf(res.nightsFull,k);
+    rows.push({bold:true, fill:'0.94 0.96 1.00', cells:[`Média (${res.nightsFull.length} noites completas)`,'—','—','—',
       fmt.hm(A('solMin')), fmt.hm(A('tibMin')), fmt.hm(A('tstMin')), fmt.hm(A('wasoMin')), fmt.pct(A('se')),
       fmt.n(A('awakenings'),1), fmt.n(A('fragIndex'),1)]});
   }
   res.naps.forEach(x=>rows.push(line(fmt.date(tAt(x.m.a))+' (cochilo)', x.m)));
-  doc.table(cols, rows);
+  doc.table(cols, rows, {wrap:[0]});
 
   doc.section('Notas metodológicas');
   const plain = h => h.replace(/<[^>]+>/g,'')
