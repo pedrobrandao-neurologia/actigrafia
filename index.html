@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Actograma Studio — Interpretação automática de actigrafia</title>
+<meta name="description" content="Análise automática de actigrafia Condor ActTrust: actograma, parâmetros de sono (Cole-Kripke/Sadeh), cosinor e análise circadiana não-paramétrica (IS, IV, L5, M10, RA). 100% local, nada é enviado.">
+<style>
+:root{
+  color-scheme: light dark;
+  --bg:#F5F5F7; --bg2:#EDEDF0;
+  --surface:rgba(255,255,255,.72); --surface-solid:#FFFFFF;
+  --text:#1D1D1F; --sec:#6E6E73; --ter:#AEAEB2;
+  --hair:rgba(60,60,67,.14);
+  --blue:#0A7AFF; --amber:#F79500; --green:#28A745; --green2:#30D158;
+  --purple:#AF52DE; --red:#FF3B30; --teal:#32ADE6;
+  --shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  --shadow-lg:0 2px 6px rgba(0,0,0,.05), 0 18px 50px rgba(0,0,0,.10);
+  --r:20px;
+  --canvas-night:rgba(10,122,255,.055);
+  --canvas-grid:rgba(60,60,67,.12);
+  --canvas-bar:#0A7AFF;
+  --canvas-sleep:rgba(40,167,90,.28);
+  --canvas-mask:rgba(255,59,48,.13);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0B0B0D; --bg2:#131316;
+    --surface:rgba(28,28,30,.72); --surface-solid:#1C1C1E;
+    --text:#F5F5F7; --sec:#98989D; --ter:#636366;
+    --hair:rgba(84,84,88,.5);
+    --blue:#0A84FF; --amber:#FF9F0A; --green:#30D158; --green2:#30D158;
+    --purple:#BF5AF2; --red:#FF453A; --teal:#64D2FF;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lg:0 2px 6px rgba(0,0,0,.5), 0 18px 50px rgba(0,0,0,.5);
+    --canvas-night:rgba(10,132,255,.10);
+    --canvas-grid:rgba(255,255,255,.10);
+    --canvas-bar:#4DA3FF;
+    --canvas-sleep:rgba(48,209,88,.30);
+    --canvas-mask:rgba(255,69,58,.16);
+  }
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html{font:100%/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;}
+body{background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased; min-height:100dvh;}
+::selection{background:color-mix(in srgb, var(--blue) 25%, transparent)}
+
+/* ---------- Toolbar ---------- */
+.toolbar{
+  position:sticky; top:0; z-index:50;
+  display:flex; align-items:center; gap:10px 12px; flex-wrap:wrap;
+  padding:calc(10px + env(safe-area-inset-top)) 20px 10px;
+  background:var(--surface);
+  -webkit-backdrop-filter:blur(22px) saturate(180%);
+  backdrop-filter:blur(22px) saturate(180%);
+  border-bottom:1px solid var(--hair);
+}
+@media (prefers-reduced-transparency: reduce){
+  .toolbar{background:var(--surface-solid); -webkit-backdrop-filter:none; backdrop-filter:none;}
+}
+.brand{display:flex; align-items:baseline; gap:8px; margin-right:auto; min-width:0}
+.brand h1{font-size:1.05rem; font-weight:700; letter-spacing:-0.01em; white-space:nowrap}
+.brand span{font-size:.8rem; color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.toolbar .btn{flex-shrink:0}
+
+/* ---------- Buttons & controls ---------- */
+.btn{
+  appearance:none; border:0; cursor:pointer; font:inherit;
+  font-size:.875rem; font-weight:600; letter-spacing:0;
+  padding:8px 16px; border-radius:999px;
+  background:var(--blue); color:#fff;
+  transition:transform .1s ease-out, filter .15s ease-out, opacity .15s;
+}
+.btn:hover{filter:brightness(1.06)}
+.btn:active{transform:scale(.965)}
+.btn.ghost{background:color-mix(in srgb, var(--blue) 13%, transparent); color:var(--blue)}
+.btn.quiet{background:transparent; color:var(--blue); padding:8px 10px}
+.btn:disabled{opacity:.4; pointer-events:none}
+.btn:focus-visible, .seg button:focus-visible, .switch input:focus-visible + .track, input[type=range]:focus-visible{
+  outline:2px solid var(--blue); outline-offset:2px;
+}
+.seg{
+  display:inline-flex; padding:2px; border-radius:10px;
+  background:color-mix(in srgb, var(--text) 7%, transparent);
+  gap:2px;
+}
+.seg button{
+  appearance:none; border:0; cursor:pointer; font:inherit;
+  font-size:.8rem; font-weight:600; color:var(--sec);
+  padding:5px 12px; border-radius:8px; background:transparent;
+  transition:background .15s ease-out, color .15s ease-out, transform .1s;
+}
+.seg button:active{transform:scale(.97)}
+.seg button[aria-pressed="true"]{
+  background:var(--surface-solid); color:var(--text);
+  box-shadow:0 1px 3px rgba(0,0,0,.12);
+}
+.switch{display:inline-flex; align-items:center; gap:9px; cursor:pointer; user-select:none}
+.switch input{position:absolute; opacity:0; width:0; height:0}
+.switch .track{
+  width:46px; height:28px; border-radius:999px; position:relative; flex-shrink:0;
+  background:color-mix(in srgb, var(--text) 16%, transparent);
+  transition:background .2s ease-out;
+}
+.switch .track::after{
+  content:""; position:absolute; top:2px; left:2px; width:24px; height:24px;
+  border-radius:50%; background:#fff; box-shadow:0 2px 5px rgba(0,0,0,.25);
+  transition:transform .2s cubic-bezier(.3,1.3,.5,1);
+}
+.switch input:checked + .track{background:var(--green)}
+.switch input:checked + .track::after{transform:translateX(18px)}
+input[type=range]{accent-color:var(--blue); width:130px}
+
+/* ---------- Layout ---------- */
+main{max-width:1120px; margin:0 auto; padding:28px 20px 80px}
+.hidden{display:none !important}
+
+/* Empty state / dropzone */
+.hero{padding:56px 0 8px; text-align:center}
+.hero h2{
+  font-size:clamp(1.9rem, 4.5vw, 2.9rem); font-weight:800;
+  letter-spacing:-0.022em; line-height:1.08;
+}
+.hero p{color:var(--sec); font-size:1.02rem; max-width:600px; margin:14px auto 0}
+.drop{
+  margin:32px auto 0; max-width:680px; padding:52px 28px;
+  border-radius:calc(var(--r) + 6px);
+  border:1.5px dashed color-mix(in srgb, var(--blue) 45%, transparent);
+  background:color-mix(in srgb, var(--blue) 5%, transparent);
+  cursor:pointer; transition:background .18s ease-out, border-color .18s, transform .18s;
+}
+.drop.over{background:color-mix(in srgb, var(--blue) 12%, transparent); border-color:var(--blue); transform:scale(1.012)}
+.drop .icon{font-size:2.2rem}
+.drop h3{font-size:1.1rem; font-weight:700; margin-top:10px; letter-spacing:-0.01em}
+.drop p{color:var(--sec); font-size:.9rem; margin-top:6px}
+.drop .or{margin-top:18px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+.privacy{
+  margin:26px auto 0; max-width:680px; display:flex; gap:10px; align-items:flex-start;
+  color:var(--sec); font-size:.83rem; text-align:left; padding:0 8px;
+}
+.privacy .dot{color:var(--green); flex-shrink:0; margin-top:1px}
+
+/* Cards */
+.card{
+  background:var(--surface-solid); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:20px 22px; margin-top:22px;
+  border:1px solid var(--hair);
+}
+.card > header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:6px}
+.card > header h3{font-size:1.05rem; font-weight:700; letter-spacing:-0.012em}
+.card > header .sub{color:var(--sec); font-size:.83rem}
+.card > header .right{margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+
+/* Metric grid */
+.metrics{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:12px; margin-top:22px}
+.metric{
+  background:var(--surface-solid); border:1px solid var(--hair);
+  border-radius:16px; padding:14px 16px; box-shadow:var(--shadow);
+}
+.metric .label{font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--sec)}
+.metric .value{font-size:1.55rem; font-weight:750; letter-spacing:-0.02em; margin-top:3px; font-variant-numeric:tabular-nums}
+.metric .value small{font-size:.85rem; font-weight:600; color:var(--sec)}
+.metric .note{font-size:.72rem; color:var(--ter); margin-top:2px}
+.metric.warn .value{color:var(--amber)}
+
+/* Canvas blocks */
+.canvas-wrap{position:relative; width:100%; margin-top:10px}
+canvas{display:block; width:100%; border-radius:12px}
+
+/* Legend */
+.legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:.78rem; color:var(--sec)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.legend i{width:12px; height:12px; border-radius:4px; display:inline-block}
+
+/* Table */
+.tbl-wrap{overflow-x:auto; margin-top:10px; border-radius:12px; border:1px solid var(--hair)}
+table{border-collapse:collapse; width:100%; font-size:.85rem; font-variant-numeric:tabular-nums; min-width:760px}
+th,td{padding:9px 12px; text-align:right; white-space:nowrap}
+th:first-child, td:first-child{text-align:left; position:sticky; left:0; background:var(--surface-solid)}
+thead th{font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--sec); font-weight:600; border-bottom:1px solid var(--hair)}
+tbody tr:not(:last-child) td{border-bottom:1px solid var(--hair)}
+tbody tr.mean td{font-weight:700; background:color-mix(in srgb, var(--blue) 6%, transparent)}
+tbody tr.mean td:first-child{background:color-mix(in srgb, var(--blue) 6%, var(--surface-solid))}
+.badge{display:inline-block; font-size:.68rem; font-weight:700; padding:2px 8px; border-radius:999px; vertical-align:middle}
+.badge.nap{background:color-mix(in srgb, var(--teal) 18%, transparent); color:var(--teal)}
+
+/* Settings row */
+.settings{display:flex; gap:18px 26px; flex-wrap:wrap; align-items:center; margin-top:8px; font-size:.85rem}
+.settings .field{display:flex; align-items:center; gap:9px; color:var(--sec)}
+.settings .field b{color:var(--text); font-weight:600}
+
+/* Meta dl */
+.meta-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px 22px; margin-top:8px; font-size:.85rem}
+.meta-grid div{display:flex; justify-content:space-between; gap:12px; border-bottom:1px dashed var(--hair); padding:5px 0}
+.meta-grid dt{color:var(--sec)}
+.meta-grid dd{font-weight:600; text-align:right; overflow:hidden; text-overflow:ellipsis}
+
+/* Methods */
+.methods{font-size:.82rem; color:var(--sec); line-height:1.6}
+.methods p{margin-top:8px}
+.methods b{color:var(--text)}
+
+.toast{
+  position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+  background:var(--surface-solid); color:var(--text); border:1px solid var(--hair);
+  padding:11px 20px; border-radius:999px; font-size:.85rem; font-weight:600;
+  box-shadow:var(--shadow-lg); opacity:0; pointer-events:none;
+  transition:opacity .22s ease-out, transform .22s cubic-bezier(.3,1.2,.5,1); z-index:99;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+.toast.err{color:var(--red)}
+
+.fade-in{animation:fadeUp .45s cubic-bezier(.2,.9,.3,1) both}
+@keyframes fadeUp{from{opacity:0; transform:translateY(14px)} to{opacity:1; transform:none}}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important; transition:none !important}
+}
+@media (max-width:640px){
+  .card{padding:16px}
+  main{padding:18px 12px 60px}
+  table{min-width:680px}
+}
+@media print{
+  .toolbar,.drop,.settings,.btn,.toast{display:none !important}
+  .card{box-shadow:none; break-inside:avoid}
+  body{background:#fff}
+}
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <div class="brand">
+    <h1>Actograma Studio</h1>
+    <span id="fileLabel">interpretação automática de actigrafia · Condor ActTrust</span>
+  </div>
+  <button class="btn ghost hidden" id="btnCsvNights">CSV noites</button>
+  <button class="btn ghost hidden" id="btnCsvEpochs">CSV épocas</button>
+  <button class="btn" id="btnOpen">Abrir arquivo…</button>
+  <input type="file" id="fileInput" accept=".txt,.csv,text/plain" hidden>
+</header>
+
+<main>
+  <!-- ============ EMPTY STATE ============ -->
+  <section id="empty">
+    <div class="hero">
+      <h2>Do registro bruto ao<br>actograma interpretado.</h2>
+      <p>Arraste o arquivo <b>.txt</b> exportado do ActStudio (Condor ActTrust). O programa escora sono-vigília, detecta os períodos de repouso, calcula parâmetros de sono noite a noite e a ritmicidade circadiana — paramétrica e não-paramétrica.</p>
+    </div>
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Soltar arquivo de actigrafia aqui ou clicar para escolher">
+      <div class="icon">⌚︎</div>
+      <h3>Solte o arquivo aqui</h3>
+      <p>Formato Condor Instruments Report — colunas DATE/TIME; PIM; TAT; ZCM; LIGHT…</p>
+      <div class="or">
+        <button class="btn" id="btnOpen2">Escolher arquivo</button>
+        <button class="btn ghost" id="btnDemo">Ver com dados de demonstração</button>
+      </div>
+    </div>
+    <div class="privacy">
+      <span class="dot">●</span>
+      <span><b>Processamento 100% local.</b> Nenhum dado sai do seu navegador — nada é enviado a servidores. Adequado para dados de pacientes; ainda assim, prefira arquivos sem identificadores no cabeçalho.</span>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section id="results" class="hidden">
+
+    <div class="card" id="settingsCard">
+      <header><h3>Parâmetros de análise</h3><span class="sub">a análise é refeita instantaneamente ao alterar</span></header>
+      <div class="settings">
+        <div class="field"><b>Algoritmo</b>
+          <div class="seg" id="segAlgo" role="group" aria-label="Algoritmo de escoragem">
+            <button data-v="ck" aria-pressed="true">Cole-Kripke</button>
+            <button data-v="sadeh" aria-pressed="false">Sadeh</button>
+          </div>
+        </div>
+        <div class="field"><b>Canal do actograma</b>
+          <div class="seg" id="segChan" role="group" aria-label="Canal de atividade exibido">
+            <button data-v="pim" aria-pressed="true">PIM</button>
+            <button data-v="zcm" aria-pressed="false">ZCM</button>
+            <button data-v="tat" aria-pressed="false">TAT</button>
+          </div>
+        </div>
+        <label class="switch field"><input type="checkbox" id="chkMask" checked><span class="track"></span><b>Off-wrist por temperatura</b></label>
+        <div class="field" id="thrField"><span>limiar</span>
+          <input type="range" id="rngThr" min="20" max="30" step="0.5" value="25">
+          <b id="thrVal">25,0 °C</b>
+        </div>
+        <label class="switch field"><input type="checkbox" id="chkLight" checked><span class="track"></span><b>Luz no actograma</b></label>
+      </div>
+    </div>
+
+    <div class="metrics" id="metrics"></div>
+
+    <div class="card fade-in">
+      <header>
+        <h3>Actograma (double-plot, 48 h)</h3>
+        <span class="sub" id="actoSub"></span>
+        <div class="right"><button class="btn quiet" data-png="actoCanvas">Exportar PNG</button></div>
+      </header>
+      <div class="canvas-wrap"><canvas id="actoCanvas" role="img" aria-label="Actograma em dupla plotagem de 48 horas"></canvas></div>
+      <div class="legend">
+        <span><i style="background:var(--canvas-bar)"></i>Atividade</span>
+        <span><i style="background:var(--canvas-sleep)"></i>Repouso/sono detectado</span>
+        <span><i style="background:var(--amber)"></i>Luz (log lux)</span>
+        <span><i style="background:var(--canvas-mask)"></i>Off-wrist / lacuna</span>
+        <span><i style="background:var(--purple)"></i>▼ marcador de evento</span>
+      </div>
+    </div>
+
+    <div class="card fade-in">
+      <header>
+        <h3>Perfil médio de 24 h e ritmo circadiano</h3>
+        <span class="sub">média por minuto do dia · cosinor · janelas L5/M10</span>
+        <div class="right"><button class="btn quiet" data-png="profCanvas">Exportar PNG</button></div>
+      </header>
+      <div class="canvas-wrap"><canvas id="profCanvas" role="img" aria-label="Perfil médio de atividade de 24 horas com ajuste cosinor"></canvas></div>
+      <div class="legend">
+        <span><i style="background:var(--canvas-bar)"></i>Atividade média (PIM)</span>
+        <span><i style="background:var(--purple)"></i>Ajuste cosinor (24 h)</span>
+        <span><i style="background:color-mix(in srgb, var(--text) 18%, transparent)"></i>L5</span>
+        <span><i style="background:color-mix(in srgb, var(--blue) 22%, transparent)"></i>M10</span>
+        <span><i style="background:var(--amber)"></i>Luz média (log lux)</span>
+      </div>
+    </div>
+
+    <div class="card fade-in">
+      <header>
+        <h3>Parâmetros de sono por noite</h3>
+        <span class="sub" id="nightsSub"></span>
+      </header>
+      <div class="tbl-wrap"><table id="nightsTable"></table></div>
+    </div>
+
+    <div class="card fade-in">
+      <header><h3>Registro e dispositivo</h3></header>
+      <dl class="meta-grid" id="metaGrid"></dl>
+    </div>
+
+    <div class="card methods fade-in">
+      <header><h3 style="color:var(--text)">Notas metodológicas</h3></header>
+      <p><b>Escoragem sono-vigília</b> — aplicada ao canal ZCM em épocas de 1 min: Cole-Kripke (janela de 7 min; sono se D&nbsp;&lt;&nbsp;1; Cole et al., <i>Sleep</i> 1992) ou Sadeh (janela de 11 min, contagens truncadas em 300; sono se PS&nbsp;≥&nbsp;0; Sadeh et al., <i>Sleep</i> 1994). Ambos foram derivados contra PSG em actígrafos AMI; a aplicação a outros dispositivos assume comparabilidade das contagens ZCM.</p>
+      <p><b>Períodos de repouso</b> — detecção automática: densidade de sono (média móvel de ±15 min) &gt; 0,5, fusão de intervalos separados por &lt; 30 min e exclusão de blocos &lt; 15 min. O maior bloco (≥ 2 h) de cada janela meio-dia→meio-dia é o episódio principal; blocos de 15–240 min são cochilos. Sem diário/evento de "luzes apagadas", a latência de sono (SOL) não é estimável — o horário de início refere-se ao início do sono sustentado. TIB = duração do episódio; TST = épocas de sono; WASO = TIB − TST; ES = TST/TIB; despertares = sequências de vigília ≥ 1 min (≥ 5 min entre parênteses); fragmentação = transições sono↔vigília por hora de TST.</p>
+      <p><b>Cosinor</b> — ajuste por mínimos quadrados de y = MESOR + A·cos(2πt/24h − φ) sobre log₁₀(PIM+1), excluídas épocas mascaradas; reporta MESOR, amplitude, acrofase e R².</p>
+      <p><b>NPCRA</b> (Van Someren et al., 1999) — IS e IV calculados sobre médias horárias de PIM; L5/M10 por janelas móveis circulares de 5 h/10 h sobre o perfil médio por minuto; RA = (M10−L5)/(M10+L5). IS requer ≥ 3 dias completos para interpretação confiável.</p>
+      <p><b>Off-wrist</b> — épocas com temperatura cutânea abaixo do limiar (ajustável) ou lacunas de registro são mascaradas e excluídas das análises.</p>
+      <p><b>Aviso</b> — ferramenta de apoio à pesquisa e à leitura clínica. Não substitui polissonografia nem julgamento médico; a actigrafia infere sono a partir da imobilidade e tende a superestimar TST em sono fragmentado (AASM, Smith et al., <i>J Clin Sleep Med</i> 2018).</p>
+    </div>
+
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ==================== CORE (análise, sem DOM) ==================== */
+const CORE = (() => {
+'use strict';
+const MIN = 60000;
+
+function parseDateTime(s){
+  const m = String(s||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  return Date.UTC(+m[3], +m[2]-1, +m[1], +m[4], +m[5], +m[6]); // "naive": preserva o relógio local do registro
+}
+function num(v){ const x = parseFloat(v); return Number.isFinite(x) ? x : null; }
+
+function parseActTrust(text){
+  const lines = text.split(/\r?\n/);
+  const meta = {};
+  let i = 0;
+  if(/Condor Instruments Report/i.test(lines[0]||'')){
+    i = 1;
+    while(i < lines.length && !/^\+-+/.test(lines[i])){
+      const m = lines[i].match(/^([^:]+?)\s*:\s*(.*)$/);
+      if(m) meta[m[1].trim().toUpperCase()] = m[2].trim();
+      i++;
+    }
+    i++;
+  }
+  while(i < lines.length && !/^DATE\/TIME/i.test(lines[i])) i++;
+  if(i >= lines.length) throw new Error('Não encontrei a linha de colunas "DATE/TIME;…". O arquivo é uma exportação do ActStudio?');
+  const cols = lines[i].split(';').map(s=>s.trim().toUpperCase());
+  const ix = {}; cols.forEach((c,j)=>{ ix[c]=j; });
+  const get = (p,name)=> name in ix ? num(p[ix[name]]) : null;
+  const rows = [];
+  for(i = i+1; i < lines.length; i++){
+    const L = lines[i]; if(!L || !L.trim()) continue;
+    const p = L.split(';');
+    const t = parseDateTime(p[ix['DATE/TIME']]);
+    if(t === null) continue;
+    rows.push({
+      t,
+      pim:get(p,'PIM'), tat:get(p,'TAT'), zcm:get(p,'ZCM'),
+      temp:get(p,'TEMPERATURE'), ext:get(p,'EXT TEMPERATURE'),
+      light:get(p,'LIGHT'), amb:get(p,'AMB LIGHT'),
+      event:get(p,'EVENT')||0, state:get(p,'STATE')
+    });
+  }
+  if(rows.length < 30) throw new Error('Menos de 30 épocas válidas — verifique o arquivo.');
+  rows.sort((a,b)=>a.t-b.t);
+  const diffs = [];
+  for(let k=1;k<Math.min(rows.length,600);k++) diffs.push((rows[k].t-rows[k-1].t)/1000);
+  diffs.sort((a,b)=>a-b);
+  let dt = diffs[Math.floor(diffs.length/2)] || 60;
+  const mi = num(meta['INTERVAL']); if(mi && mi>0) dt = mi;
+  return {meta, rows, dt};
+}
+
+/* Grade temporal regular; reamostra para épocas de 60 s quando dt < 60 */
+function buildGrid(parsed){
+  let {rows, dt} = parsed;
+  let epoch = dt;
+  if(dt < 60){
+    const f = Math.max(1, Math.round(60/dt)); epoch = dt*f;
+    const out = [];
+    for(let k=0;k<rows.length;k+=f){
+      const c = rows.slice(k,k+f);
+      const S = key => c.reduce((a,r)=>a+(r[key]||0),0);
+      const M = key => { const v=c.map(r=>r[key]).filter(x=>x!=null); return v.length? v.reduce((a,b)=>a+b,0)/v.length : null; };
+      out.push({t:c[0].t, pim:S('pim'), tat:S('tat'), zcm:S('zcm'),
+        temp:M('temp'), ext:M('ext'), light:M('light'), amb:M('amb'),
+        event:c.some(r=>r.event>0)?1:0, state:c[0].state});
+    }
+    rows = out;
+  }
+  const step = epoch*1000;
+  const t0 = rows[0].t, tN = rows[rows.length-1].t;
+  const n = Math.min(Math.round((tN-t0)/step)+1, 200*1440); // teto de segurança ~200 dias
+  const F = () => { const a = new Float64Array(n); a.fill(NaN); return a; };
+  const g = { t0, epoch, n, epochMin:epoch/60,
+    pim:F(), tat:F(), zcm:F(), temp:F(), light:F(),
+    event:new Uint8Array(n), present:new Uint8Array(n) };
+  for(const r of rows){
+    const k = Math.round((r.t-t0)/step);
+    if(k<0 || k>=n) continue;
+    g.present[k]=1;
+    if(r.pim!=null) g.pim[k]=r.pim;
+    if(r.tat!=null) g.tat[k]=r.tat;
+    if(r.zcm!=null) g.zcm[k]=r.zcm;
+    if(r.temp!=null) g.temp[k]=r.temp;
+    if(r.light!=null) g.light[k]=r.light;
+    if(r.event>0) g.event[k]=1;
+  }
+  return g;
+}
+
+function maskArray(g, useTemp, thr){
+  const m = new Uint8Array(g.n);
+  for(let i=0;i<g.n;i++){
+    if(!g.present[i]) { m[i]=1; continue; }
+    if(useTemp && Number.isFinite(g.temp[i]) && g.temp[i] < thr) m[i]=1;
+  }
+  return m;
+}
+
+function activityFor(g, masked, chan){
+  const src = g[chan] && g[chan].some ? g[chan] : g.pim;
+  const a = new Float64Array(g.n);
+  for(let i=0;i<g.n;i++) a[i] = (masked[i] || !Number.isFinite(src[i])) ? 0 : src[i];
+  return a;
+}
+
+/* ---- Escoragem sono-vigília (ZCM, épocas de 1 min) ---- */
+function scoreColeKripke(a){
+  const n=a.length, s=new Uint8Array(n), w=[106,54,58,76,230,74,67];
+  for(let i=0;i<n;i++){
+    let D=0;
+    for(let j=-4;j<=2;j++){ const k=i+j; D += w[j+4]*((k>=0&&k<n)?a[k]:0); }
+    s[i] = (0.001*D) < 1 ? 1 : 0;
+  }
+  return s;
+}
+function scoreSadeh(a){
+  const n=a.length, s=new Uint8Array(n);
+  const cap = i => Math.min((i>=0&&i<n)?a[i]:0, 300);
+  for(let i=0;i<n;i++){
+    let sum=0, nat=0;
+    for(let j=-5;j<=5;j++){ const v=cap(i+j); sum+=v; if(v>=50&&v<100) nat++; }
+    const avg=sum/11;
+    let mu=0; const vals=[];
+    for(let j=-5;j<=0;j++){ vals.push(cap(i+j)); }
+    mu = vals.reduce((x,y)=>x+y,0)/vals.length;
+    const sd = Math.sqrt(vals.reduce((x,y)=>x+(y-mu)*(y-mu),0)/vals.length);
+    const ps = 7.601 - 0.065*avg - 1.08*nat - 0.056*sd - 0.703*Math.log(cap(i)+1);
+    s[i] = ps>=0 ? 1 : 0;
+  }
+  return s;
+}
+
+/* ---- Detecção de segmentos de repouso ---- */
+function detectSegments(sleep, masked, epochMin){
+  const n = sleep.length;
+  const H = Math.max(1, Math.round(15/epochMin));
+  const ps = new Float64Array(n+1), pc = new Float64Array(n+1);
+  for(let i=0;i<n;i++){ ps[i+1]=ps[i]+(masked[i]?0:sleep[i]); pc[i+1]=pc[i]+(masked[i]?0:1); }
+  const above = new Uint8Array(n);
+  for(let i=0;i<n;i++){
+    const a=Math.max(0,i-H), b=Math.min(n-1,i+H);
+    const c=pc[b+1]-pc[a];
+    above[i] = (c > 0 && (ps[b+1]-ps[a])/c > 0.5) ? 1 : 0;
+  }
+  const raw=[]; let st=-1;
+  for(let i=0;i<n;i++){
+    if(above[i] && st<0) st=i;
+    if((!above[i]||i===n-1) && st>=0){ raw.push([st, above[i]?i:i-1]); st=-1; }
+  }
+  const gap = Math.round(30/epochMin), merged=[];
+  for(const s of raw){
+    if(merged.length && s[0]-merged[merged.length-1][1] <= gap) merged[merged.length-1][1]=s[1];
+    else merged.push(s.slice());
+  }
+  const minLen = Math.round(15/epochMin);
+  return merged.filter(s => s[1]-s[0]+1 >= minLen);
+}
+
+function segMetrics(seg, sleep, masked, epochMin){
+  const [a,b] = seg;
+  let tst=0, mk=0, trans=0, awak1=0, awak5=0, prev=null, wakeRun=0;
+  for(let i=a;i<=b;i++){
+    if(masked[i]){ mk++; continue; }
+    const s = sleep[i];
+    if(prev!==null && s!==prev) trans++;
+    if(s) { tst++; if(wakeRun>0){ awak1++; if(wakeRun*epochMin>=5) awak5++; wakeRun=0; } }
+    else wakeRun++;
+    prev = s;
+  }
+  const tibMin = (b-a+1)*epochMin, tstMin = tst*epochMin, mkMin = mk*epochMin;
+  const validMin = tibMin - mkMin;
+  return {
+    a, b, tibMin, tstMin, wasoMin: Math.max(0, validMin - tstMin),
+    se: validMin>0 ? tstMin/validMin : 0,
+    awakenings: awak1, awakenings5: awak5,
+    fragIndex: tstMin>0 ? trans/(tstMin/60) : 0,
+    maskedMin: mkMin
+  };
+}
+
+/* Episódio principal por janela meio-dia → meio-dia */
+function assignNights(segments, g){
+  const noon = t => { const d = new Date(t); const base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12); return t >= base ? base : base - 86400000; };
+  const byWin = new Map();
+  for(const s of segments){
+    const mid = g.t0 + ((s[0]+s[1])/2)*g.epoch*1000;
+    const w = noon(mid);
+    if(!byWin.has(w)) byWin.set(w, []);
+    byWin.get(w).push(s);
+  }
+  const nights=[], naps=[];
+  const minMain = Math.round(120/g.epochMin);
+  for(const [w, list] of [...byWin.entries()].sort((x,y)=>x[0]-y[0])){
+    list.sort((x,y)=>(y[1]-y[0])-(x[1]-x[0]));
+    let main=null;
+    if(list[0][1]-list[0][0]+1 >= minMain){ main=list[0]; nights.push({win:w, seg:main}); }
+    for(const s of list){
+      if(s===main) continue;
+      const dur=(s[1]-s[0]+1)*g.epochMin;
+      if(dur>=15 && dur<=240) naps.push({win:w, seg:s});
+    }
+  }
+  return {nights, naps};
+}
+
+/* ---- Cosinor (log10(PIM+1), período 24 h) ---- */
+function cosinor(g, masked){
+  const w = 2*Math.PI/1440;
+  let n=0,Sy=0,Sc=0,Ss=0,Scc=0,Sss=0,Scs=0,Syc=0,Sys=0,Syy=0;
+  for(let i=0;i<g.n;i++){
+    if(masked[i] || !Number.isFinite(g.pim[i])) continue;
+    const t = ((g.t0 + i*g.epoch*1000)/MIN) % 1440;
+    const y = Math.log10(g.pim[i]+1), c=Math.cos(w*t), s=Math.sin(w*t);
+    n++; Sy+=y; Sc+=c; Ss+=s; Scc+=c*c; Sss+=s*s; Scs+=c*s; Syc+=y*c; Sys+=y*s; Syy+=y*y;
+  }
+  if(n<100) return null;
+  // resolve [n Sc Ss; Sc Scc Scs; Ss Scs Sss] [M a b] = [Sy Syc Sys]
+  const A=[[n,Sc,Ss],[Sc,Scc,Scs],[Ss,Scs,Sss]], B=[Sy,Syc,Sys];
+  for(let col=0; col<3; col++){
+    let piv=col;
+    for(let r=col+1;r<3;r++) if(Math.abs(A[r][col])>Math.abs(A[piv][col])) piv=r;
+    [A[col],A[piv]]=[A[piv],A[col]]; [B[col],B[piv]]=[B[piv],B[col]];
+    if(Math.abs(A[col][col])<1e-12) return null;
+    for(let r=0;r<3;r++){
+      if(r===col) continue;
+      const f=A[r][col]/A[col][col];
+      for(let c2=col;c2<3;c2++) A[r][c2]-=f*A[col][c2];
+      B[r]-=f*B[col];
+    }
+  }
+  const M=B[0]/A[0][0], a=B[1]/A[1][1], b=B[2]/A[2][2];
+  const amp=Math.hypot(a,b);
+  let acroMin=(Math.atan2(b,a)/w); acroMin=((acroMin%1440)+1440)%1440;
+  // R²
+  const ybar=Sy/n;
+  let ssTot=0, ssRes=0;
+  for(let i=0;i<g.n;i++){
+    if(masked[i] || !Number.isFinite(g.pim[i])) continue;
+    const t=((g.t0+i*g.epoch*1000)/MIN)%1440;
+    const y=Math.log10(g.pim[i]+1);
+    const yh=M+a*Math.cos(w*t)+b*Math.sin(w*t);
+    ssTot+=(y-ybar)*(y-ybar); ssRes+=(y-yh)*(y-yh);
+  }
+  return {mesor:M, amp, acroMin, r2: ssTot>0? 1-ssRes/ssTot : 0, a, b};
+}
+
+/* ---- NPCRA: IS/IV sobre médias horárias; L5/M10 sobre perfil por minuto ---- */
+function hourlyMeans(g, masked){
+  const perHour = Math.round(60/g.epochMin);
+  const H = Math.floor(g.n/perHour), xs=[];
+  for(let h=0;h<H;h++){
+    let s=0,c=0;
+    for(let k=h*perHour;k<(h+1)*perHour;k++){
+      if(masked[k]||!Number.isFinite(g.pim[k])) continue;
+      s+=g.pim[k]; c++;
+    }
+    xs.push(c>=perHour/2 ? s/c : null);
+  }
+  return xs;
+}
+function isiv(g, masked){
+  const xs = hourlyMeans(g, masked);
+  const idx=[], v=[];
+  xs.forEach((x,i)=>{ if(x!=null){ idx.push(i); v.push(x);} });
+  const n=v.length;
+  if(n<48) return {is:null, iv:null, hours:n};
+  const mean=v.reduce((a,b)=>a+b,0)/n;
+  let denom=0; v.forEach(x=>denom+=(x-mean)*(x-mean));
+  // IS: perfil de 24 h alinhado ao relógio
+  const prof=new Array(24).fill(0), cnt=new Array(24).fill(0);
+  const hour0=Math.floor(((g.t0/MIN)%1440)/60);
+  idx.forEach((i,j)=>{ const h=(hour0+i)%24; prof[h]+=v[j]; cnt[h]++; });
+  let numIS=0, used=0;
+  for(let h=0;h<24;h++) if(cnt[h]>0){ const p=prof[h]/cnt[h]; numIS+=(p-mean)*(p-mean); used++; }
+  const is = denom>0 ? (n*numIS)/(used*denom) : null;
+  let numIV=0, pairs=0;
+  for(let j=1;j<v.length;j++) if(idx[j]===idx[j-1]+1){ numIV+=(v[j]-v[j-1])**2; pairs++; }
+  const iv = (denom>0&&pairs>0) ? (n*numIV)/(pairs*denom) : null;
+  return {is: is!=null? Math.min(1,Math.max(0,is)) : null, iv, hours:n};
+}
+function minuteProfile(g, masked, key){
+  const sum=new Float64Array(1440), cnt=new Float64Array(1440);
+  const src=g[key];
+  for(let i=0;i<g.n;i++){
+    if(masked[i]||!Number.isFinite(src[i])) continue;
+    const m=Math.floor(((g.t0+i*g.epoch*1000)/MIN)%1440);
+    sum[m]+=src[i]; cnt[m]++;
+  }
+  const p=new Float64Array(1440);
+  for(let m=0;m<1440;m++) p[m]=cnt[m]>0? sum[m]/cnt[m] : NaN;
+  // preenche lacunas por vizinhança
+  for(let m=0;m<1440;m++) if(!Number.isFinite(p[m])){
+    for(let d=1;d<1440;d++){
+      const l=p[(m-d+1440)%1440], r=p[(m+d)%1440];
+      if(Number.isFinite(l)){p[m]=l;break;} if(Number.isFinite(r)){p[m]=r;break;}
+    }
+    if(!Number.isFinite(p[m])) p[m]=0;
+  }
+  return p;
+}
+function l5m10(profile){
+  const roll=(w)=>{
+    let best={val:null,start:0}, worst={val:null,start:0}, s=0;
+    for(let m=0;m<w;m++) s+=profile[m];
+    for(let st=0;st<1440;st++){
+      const mean=s/w;
+      if(best.val===null||mean>best.val){best={val:mean,start:st};}
+      if(worst.val===null||mean<worst.val){worst={val:mean,start:st};}
+      s+=profile[(st+w)%1440]-profile[st];
+    }
+    return {best,worst};
+  };
+  const r5=roll(300), r10=roll(600);
+  const L5=r5.worst.val, M10=r10.best.val;
+  return {L5, M10, L5onset:r5.worst.start, M10onset:r10.best.start,
+    RA:(M10+L5)>0? (M10-L5)/(M10+L5) : null};
+}
+
+/* ---- Pipeline completo ---- */
+function analyze(g, opts){
+  const masked = maskArray(g, opts.maskTemp, opts.thr);
+  const zcm = activityFor(g, masked, 'zcm');
+  const sleep = opts.algo==='sadeh' ? scoreSadeh(zcm) : scoreColeKripke(zcm);
+  const segments = detectSegments(sleep, masked, g.epochMin);
+  const {nights, naps} = assignNights(segments, g);
+  const nightMetrics = nights.map(nt => ({...nt, m: segMetrics(nt.seg, sleep, masked, g.epochMin)}));
+  const napMetrics = naps.map(np => ({...np, m: segMetrics(np.seg, sleep, masked, g.epochMin)}));
+  const cos = cosinor(g, masked);
+  const np = isiv(g, masked);
+  const profAct = minuteProfile(g, masked, 'pim');
+  const profLight = minuteProfile(g, masked, 'light');
+  const lm = l5m10(profAct);
+  let unmasked=0; for(let i=0;i<g.n;i++) if(!masked[i]) unmasked++;
+  return {masked, sleep, segments, nights:nightMetrics, naps:napMetrics,
+    cosinor:cos, npcra:{...np, ...lm}, profAct, profLight,
+    daysRecorded: unmasked*g.epochMin/1440,
+    spanDays: g.n*g.epochMin/1440};
+}
+
+/* ---- Gerador de demonstração (formato ActTrust) ---- */
+function demoText(){
+  const pad=x=>String(x).padStart(2,'0');
+  const rnd=(()=>{let s=42;return()=>{s=(s*1664525+1013904223)>>>0;return s/2**32;};})();
+  let out='+-------------+ Condor Instruments Report +-------------+\n'+
+    'SOFTWARE_VERSION : demo\nSUBJECT_NAME : Demonstração sintética\nDEVICE_MODEL : ActTrust (simulado)\n'+
+    'TAT_THRESHOLD : 1024\nMODE : PIM/TAT/ZCM\nINTERVAL : 60\n'+
+    '+-------------------------------------------------------+\n'+
+    'DATE/TIME;MS;EVENT;TEMPERATURE;EXT TEMPERATURE;ORIENTATION;PIM;PIMn;TAT;TATn;ZCM;ZCMn;LIGHT;AMB LIGHT;RED LIGHT;GREEN LIGHT;BLUE LIGHT;IR LIGHT;UVA LIGHT;UVB LIGHT;STATE\n';
+  const start=Date.UTC(2026,2,2,0,0,0); // 02/03/2026
+  for(let i=0;i<8*1440;i++){
+    const t=start+i*60000, d=new Date(t);
+    const mm=((t/60000)%1440+1440)%1440, h=mm/60;
+    const day=Math.floor(i/1440);
+    const bed=23.4+ (rnd()-0.5)*0.8, rise=7.1+(rnd()-0.5)*0.6;
+    const asleep = (h>=bed || h<rise);
+    const nap = (day%3===1 && h>=14.2 && h<14.9);
+    let zcm, pim, tat;
+    if(asleep||nap){
+      const burst = rnd()<0.04;                       // breve despertar/movimento
+      zcm = burst? Math.round(15+rnd()*60) : (rnd()<0.15? Math.round(rnd()*2):0);
+      pim = burst? Math.round(400+rnd()*2500) : Math.round(rnd()*60);
+      tat = burst? Math.round(60+rnd()*300) : Math.round(rnd()*8);
+    } else {
+      const shape = 0.55+0.45*Math.sin((h-13)/24*2*Math.PI+1.2);
+      const act = 40+shape*180*(0.6+rnd()) + (rnd()<0.05? 250*rnd():0);
+      zcm = Math.round(act*0.5); pim = Math.round(act*22); tat = Math.round(act*3.4);
+    }
+    const off = (day===3 && h>=10 && h<11.2);
+    if(off){ zcm=0; pim=0; tat=0; }
+    const temp = off? 24.1+rnd()*0.8 : (asleep? 34.2:32.6)+(rnd()-0.5)*0.6;
+    const light = off? 120 : (asleep||nap? (rnd()<0.05? 8:0.2) : (h>6.5&&h<18? 300+900*rnd() : 40+80*rnd()));
+    out+=`${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00;0;${(day===2&&mm===1374)?1:0};${temp.toFixed(2)};27.00;0;${pim};0;${tat};0;${zcm};0;${light.toFixed(2)};0.00;0.00;0.00;0.00;0.00;0.00;0.00;0\n`;
+  }
+  return out;
+}
+
+return {parseActTrust, buildGrid, analyze, demoText, minuteProfile};
+})();
+/* ==================== FIM CORE ==================== */
+</script>
+
+<script>
+/* ==================== UI / RENDER ==================== */
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const MIN = 60000;
+const state = { grid:null, meta:null, res:null, fileName:'',
+  algo:'ck', chan:'pim', maskTemp:true, thr:25, showLight:true };
+
+const fmt = {
+  hm(min){ if(min==null||!isFinite(min)) return '—'; const h=Math.floor(min/60), m=Math.round(min%60); return h>0? `${h}h${String(m).padStart(2,'0')}` : `${m} min`; },
+  clock(min){ if(min==null||!isFinite(min)) return '—'; min=((min%1440)+1440)%1440; return `${String(Math.floor(min/60)).padStart(2,'0')}:${String(Math.round(min%60)).padStart(2,'0')}`; },
+  clockT(t){ const d=new Date(t); return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; },
+  date(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}`; },
+  dateFull(t){ const d=new Date(t); return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`; },
+  pct(x){ return x==null? '—' : (100*x).toFixed(1).replace('.',',')+'%'; },
+  n(x,d=2){ return (x==null||!isFinite(x))? '—' : x.toFixed(d).replace('.',','); }
+};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const alphaCol = (c, a) => {
+  const m = c.match(/^#([0-9a-f]{6})$/i);
+  if(!m) return c;
+  const n = parseInt(m[1],16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+};
+
+function toast(msg, err=false){
+  const t=$('#toast'); t.textContent=msg; t.classList.toggle('err',err); t.classList.add('show');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'), 3200);
+}
+
+/* ---------- carregamento ---------- */
+function loadText(text, name){
+  try{
+    const parsed = CORE.parseActTrust(text);
+    state.grid = CORE.buildGrid(parsed);
+    state.meta = parsed.meta;
+    state.fileName = name;
+    $('#fileLabel').textContent = name;
+    $('#empty').classList.add('hidden');
+    $('#results').classList.remove('hidden');
+    $('#btnCsvNights').classList.remove('hidden');
+    $('#btnCsvEpochs').classList.remove('hidden');
+    recompute();
+    window.scrollTo({top:0, behavior:'smooth'});
+    toast(`${name} — ${state.grid.n.toLocaleString('pt-BR')} épocas de ${state.grid.epochMin} min carregadas`);
+  }catch(e){ toast('Erro ao ler o arquivo: '+e.message, true); }
+}
+function loadFile(file){
+  if(!file) return;
+  const r = new FileReader();
+  r.onload = () => loadText(String(r.result), file.name);
+  r.onerror = () => toast('Falha na leitura do arquivo.', true);
+  r.readAsText(file);
+}
+
+/* ---------- recomputar + render ---------- */
+function recompute(){
+  if(!state.grid) return;
+  state.res = CORE.analyze(state.grid, {algo:state.algo, maskTemp:state.maskTemp, thr:state.thr});
+  renderMetrics(); renderNights(); renderMeta(); drawActogram(); drawProfile();
+}
+
+function renderMetrics(){
+  const {res, grid} = state;
+  const N = res.nights.map(n=>n.m);
+  const avg = k => N.length? N.reduce((a,m)=>a+m[k],0)/N.length : null;
+  const seAvg = N.length? N.reduce((a,m)=>a+m.se,0)/N.length : null;
+  const few = res.daysRecorded < 3;
+  const cos = res.cosinor, np = res.npcra;
+  const cards = [
+    {label:'Dias registrados', value:fmt.n(res.daysRecorded,1), note:`${res.nights.length} noites · ${res.naps.length} cochilos`, warn:few},
+    {label:'TST médio', value:fmt.hm(avg('tstMin')), note:'tempo total de sono/noite'},
+    {label:'Eficiência média', value:fmt.pct(seAvg), note:'TST / TIB', warn:seAvg!=null&&seAvg<0.85},
+    {label:'WASO médio', value:fmt.hm(avg('wasoMin')), note:'vigília após início do sono'},
+    {label:'IS', value:fmt.n(np.is), note:'estabilidade interdiária (0–1)', warn:few},
+    {label:'IV', value:fmt.n(np.iv), note:'fragmentação intradiária', warn:np.iv!=null&&np.iv>1},
+    {label:'RA', value:fmt.n(np.RA), note:'amplitude relativa (M10−L5)/(M10+L5)'},
+    {label:'M10', value:fmt.n(np.M10,0), note:`início ${fmt.clock(np.M10onset)} · PIM/época`},
+    {label:'L5', value:fmt.n(np.L5,0), note:`início ${fmt.clock(np.L5onset)} · PIM/época`},
+    {label:'Acrofase', value:cos? fmt.clock(cos.acroMin):'—', note:'cosinor 24 h'},
+    {label:'Amplitude', value:cos? fmt.n(cos.amp):'—', note:'log₁₀(PIM+1), cosinor'},
+    {label:'MESOR', value:cos? fmt.n(cos.mesor):'—', note:`R² = ${cos? fmt.n(cos.r2):'—'}`},
+  ];
+  $('#metrics').innerHTML = cards.map(c=>`
+    <div class="metric${c.warn?' warn':''}">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+      <div class="note">${c.note}</div>
+    </div>`).join('');
+  $('#actoSub').textContent = `${fmt.dateFull(grid.t0)} – ${fmt.dateFull(grid.t0+(grid.n-1)*grid.epoch*1000)} · época de ${grid.epochMin} min · escoragem ${state.algo==='ck'?'Cole-Kripke':'Sadeh'} (ZCM)`;
+  $('#nightsSub').textContent = res.daysRecorded<3 ? '⚠︎ registro < 3 dias — IS/IV e médias têm baixa confiabilidade (AASM recomenda 72 h–14 dias)' : 'episódio principal por janela meio-dia → meio-dia';
+}
+
+function renderNights(){
+  const {res, grid} = state;
+  const rows = res.nights.map(nt=>{
+    const m=nt.m;
+    const on = grid.t0 + nt.seg[0]*grid.epoch*1000;
+    const off = grid.t0 + (nt.seg[1]+1)*grid.epoch*1000;
+    return `<tr>
+      <td>${fmt.date(on)} → ${fmt.date(off)}</td>
+      <td>${fmt.clockT(on)}</td><td>${fmt.clockT(off)}</td>
+      <td>${fmt.hm(m.tibMin)}</td><td>${fmt.hm(m.tstMin)}</td>
+      <td>${fmt.hm(m.wasoMin)}</td><td>${fmt.pct(m.se)}</td>
+      <td>${m.awakenings} (${m.awakenings5})</td>
+      <td>${fmt.n(m.fragIndex,1)}</td></tr>`;
+  });
+  const N=res.nights.map(n=>n.m);
+  if(N.length){
+    const avg=k=>N.reduce((a,m)=>a+m[k],0)/N.length;
+    rows.push(`<tr class="mean"><td>Média (${N.length} noites)</td><td>—</td><td>—</td>
+      <td>${fmt.hm(avg('tibMin'))}</td><td>${fmt.hm(avg('tstMin'))}</td>
+      <td>${fmt.hm(avg('wasoMin'))}</td><td>${fmt.pct(N.reduce((a,m)=>a+m.se,0)/N.length)}</td>
+      <td>${fmt.n(avg('awakenings'),1)}</td><td>${fmt.n(avg('fragIndex'),1)}</td></tr>`);
+  }
+  const napRows = res.naps.map(np=>{
+    const on=grid.t0+np.seg[0]*grid.epoch*1000;
+    return `<tr><td>${fmt.date(on)} <span class="badge nap">cochilo</span></td>
+      <td>${fmt.clockT(on)}</td><td>${fmt.clockT(grid.t0+(np.seg[1]+1)*grid.epoch*1000)}</td>
+      <td>${fmt.hm(np.m.tibMin)}</td><td>${fmt.hm(np.m.tstMin)}</td><td>—</td><td>${fmt.pct(np.m.se)}</td><td>—</td><td>—</td></tr>`;
+  });
+  $('#nightsTable').innerHTML = `
+    <thead><tr><th>Noite</th><th>Início</th><th>Fim</th><th>TIB</th><th>TST</th><th>WASO</th><th>ES</th><th>Despertares ≥1′ (≥5′)</th><th>Frag./h</th></tr></thead>
+    <tbody>${rows.join('')}${napRows.join('')}</tbody>`;
+}
+
+function renderMeta(){
+  const m = state.meta || {};
+  const keys = ['DEVICE_MODEL','DEVICE_ID','HARDWARE_VERSION','FIRMWARE_VERSION','SOFTWARE_VERSION','MODE','INTERVAL','TAT_THRESHOLD','DATA_CORRECTION_DESCRIPTION','DATE_TIME','SUBJECT_GENDER','SUBJECT_DATE_OF_BIRTH'];
+  const nice = {DEVICE_MODEL:'Modelo',DEVICE_ID:'ID do dispositivo',HARDWARE_VERSION:'Hardware',FIRMWARE_VERSION:'Firmware',SOFTWARE_VERSION:'ActStudio',MODE:'Modo',INTERVAL:'Intervalo (s)',TAT_THRESHOLD:'Limiar TAT',DATA_CORRECTION_DESCRIPTION:'Correção de dados',DATE_TIME:'Exportado em',SUBJECT_GENDER:'Sexo',SUBJECT_DATE_OF_BIRTH:'Nascimento'};
+  $('#metaGrid').innerHTML = keys.filter(k=>m[k]).map(k=>`<div><dt>${nice[k]}</dt><dd>${m[k]}</dd></div>`).join('')
+    || '<div><dt>Cabeçalho</dt><dd>não encontrado</dd></div>';
+}
+
+/* ---------- canvas helpers ---------- */
+function setupCanvas(cv, cssH){
+  const dpr = Math.min(window.devicePixelRatio||1, 2.5);
+  const w = cv.parentElement.clientWidth;
+  cv.style.height = cssH+'px';
+  cv.width = Math.round(w*dpr); cv.height = Math.round(cssH*dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx, W:w, H:cssH};
+}
+
+/* ---------- Actograma double-plot ---------- */
+function drawActogram(){
+  const {grid, res} = state; if(!grid) return;
+  const cv = $('#actoCanvas');
+  const d0 = (()=>{ const d=new Date(grid.t0); return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); })();
+  const tEnd = grid.t0 + grid.n*grid.epoch*1000;
+  const days = Math.max(1, Math.ceil((tEnd-d0)/86400000));
+  const rowH = days<=10? 46 : days<=25? 34 : 26;
+  const padL=52, padR=10, padT=26, padB=8;
+  const {ctx, W} = setupCanvas(cv, padT+padB+days*rowH);
+  const plotW = W-padL-padR;
+  const chan = state.chan;
+  const src = grid[chan];
+  // escala: percentil 98 do canal
+  const vals=[]; for(let i=0;i<grid.n;i++) if(!res.masked[i]&&Number.isFinite(src[i])&&src[i]>0) vals.push(src[i]);
+  vals.sort((a,b)=>a-b);
+  const vmax = vals.length? vals[Math.floor(vals.length*0.98)] : 1;
+  const font='-apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+
+  ctx.clearRect(0,0,W,cv.height);
+  // eixo de horas 0..48
+  ctx.font='600 10px '+font; ctx.fillStyle=css('--sec'); ctx.textAlign='center';
+  for(let h=0;h<=48;h+=6){
+    const x=padL+plotW*h/48;
+    ctx.fillText(String(h%24).padStart(2,'0'), x, padT-10);
+  }
+  const barCol=css('--canvas-bar'), gridCol=css('--canvas-grid'),
+        nightCol=css('--canvas-night'), sleepCol=css('--canvas-sleep'),
+        maskCol=css('--canvas-mask'), amber=css('--amber'), purple=css('--purple');
+
+  const idxAt = t => Math.round((t-grid.t0)/(grid.epoch*1000));
+  for(let r=0;r<days;r++){
+    const y0=padT+r*rowH, bh=rowH-8, yBase=y0+bh;
+    const rowStart=d0+r*86400000; // 48 h por linha
+    // sombreado noturno 21h–6h nas duas cópias
+    ctx.fillStyle=nightCol;
+    [[21,30],[45,48],[0,6]].forEach(([a,b])=>{
+      ctx.fillRect(padL+plotW*a/48, y0-2, plotW*(b-a)/48, bh+4);
+    });
+    // grade 6h
+    ctx.strokeStyle=gridCol; ctx.lineWidth=1; ctx.beginPath();
+    for(let h=0;h<=48;h+=6){ const x=padL+plotW*h/48; ctx.moveTo(x,y0-2); ctx.lineTo(x,yBase+2); }
+    ctx.stroke();
+    // rótulo da data
+    ctx.fillStyle=css('--sec'); ctx.font='600 10px '+font; ctx.textAlign='left';
+    ctx.fillText(fmt.date(rowStart), 6, y0+bh/2+3);
+
+    // agregação por pixel
+    const pxPerMs = plotW/(48*3600000);
+    // faixas: sono, máscara (por segmentos contíguos)
+    const drawBand = (test, col) => {
+      ctx.fillStyle=col;
+      let start=null;
+      const t0r=rowStart, t1r=rowStart+48*3600000;
+      const i0=Math.max(0, idxAt(t0r)), i1=Math.min(grid.n-1, idxAt(t1r));
+      for(let i=i0;i<=i1+1;i++){
+        const on = i<=i1 && test(i);
+        if(on && start===null) start=i;
+        if((!on||i===i1+1) && start!==null){
+          const xa=Math.max(padL, padL+(grid.t0+start*grid.epoch*1000-t0r)*pxPerMs);
+          const xb=Math.min(padL+plotW, padL+(grid.t0+i*grid.epoch*1000-t0r)*pxPerMs);
+          const bw=Math.max(1.5, xb-xa);
+          if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(xa, y0-1, bw, bh+2, 4); ctx.fill(); }
+          else ctx.fillRect(xa, y0-1, bw, bh+2);
+          start=null;
+        }
+      }
+    };
+    drawBand(i=>res.masked[i]===1, maskCol);
+    drawBand(i=>res.masked[i]===0 && (()=>{ // segmento de repouso detectado
+      return res.segments.some(s=>i>=s[0]&&i<=s[1]);
+    })(), sleepCol);
+
+    // barras de atividade (máximo por pixel)
+    ctx.fillStyle=barCol;
+    const t0r=rowStart;
+    const i0=Math.max(0, idxAt(t0r)), i1=Math.min(grid.n-1, idxAt(t0r+48*3600000));
+    let px=-1, pmax=0;
+    const flush=(x,v)=>{ if(v>0){ const h=Math.min(1,v/vmax)*bh; ctx.fillRect(padL+x, yBase-h, 1, h);} };
+    for(let i=i0;i<=i1;i++){
+      if(res.masked[i]||!Number.isFinite(src[i])) continue;
+      const x=Math.floor((grid.t0+i*grid.epoch*1000-t0r)*pxPerMs);
+      if(x<0||x>=plotW) continue;
+      if(x!==px){ if(px>=0) flush(px,pmax); px=x; pmax=src[i]; } else pmax=Math.max(pmax,src[i]);
+    }
+    if(px>=0) flush(px,pmax);
+
+    // luz (linha âmbar no topo da faixa; altura ∝ log10 lux, 0–5 décadas)
+    if(state.showLight){
+      ctx.strokeStyle=amber; ctx.lineWidth=1.4; ctx.beginPath();
+      let started=false;
+      for(let x=0;x<plotW;x+=2){
+        const t=t0r+x/pxPerMs, i=idxAt(t);
+        if(i<0||i>=grid.n||res.masked[i]||!Number.isFinite(grid.light[i])){ started=false; continue; }
+        const lg=Math.min(1, Math.log10(grid.light[i]+1)/5);
+        const y=y0-2-lg*9;
+        if(!started){ ctx.moveTo(padL+x, y); started=true; }
+        else ctx.lineTo(padL+x, y);
+      }
+      ctx.stroke();
+    }
+    // eventos
+    ctx.fillStyle=purple;
+    const iE0=Math.max(0,idxAt(t0r)), iE1=Math.min(grid.n-1,idxAt(t0r+48*3600000));
+    for(let i=iE0;i<=iE1;i++) if(grid.event[i]){
+      const x=padL+(grid.t0+i*grid.epoch*1000-t0r)*pxPerMs;
+      ctx.beginPath(); ctx.moveTo(x-4,y0-3); ctx.lineTo(x+4,y0-3); ctx.lineTo(x,y0+3); ctx.fill();
+    }
+  }
+}
+
+/* ---------- Perfil médio de 24 h ---------- */
+function drawProfile(){
+  const {grid, res} = state; if(!grid) return;
+  const cv = $('#profCanvas');
+  const padL=46, padR=46, padT=16, padB=26;
+  const {ctx, W} = setupCanvas(cv, 280);
+  const H=280, plotW=W-padL-padR, plotH=H-padT-padB;
+  const font='-apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+  ctx.clearRect(0,0,W,H);
+
+  // suaviza 15 min
+  const smooth=(p,w)=>{const o=new Float64Array(1440);for(let m=0;m<1440;m++){let s=0;for(let j=-w;j<=w;j++)s+=p[(m+j+1440)%1440];o[m]=s/(2*w+1);}return o;};
+  const act=smooth(res.profAct,7), light=smooth(res.profLight,7);
+  let amax=0; for(let m=0;m<1440;m++) amax=Math.max(amax,act[m]); amax=amax||1;
+  const X=m=>padL+plotW*m/1440, Y=v=>padT+plotH*(1-v/amax/1.06);
+  const np=res.npcra;
+
+  // janelas L5/M10
+  const band=(start,len,col)=>{ ctx.fillStyle=col;
+    for(const [a,b] of (start+len<=1440? [[start,start+len]] : [[start,1440],[0,start+len-1440]]))
+      ctx.fillRect(X(a),padT,X(b)-X(a),plotH); };
+  band(np.M10onset,600,alphaCol(css('--blue'),0.10));
+  band(np.L5onset,300,alphaCol(css('--text'),0.08));
+
+  // grade + eixo X
+  ctx.strokeStyle=css('--canvas-grid'); ctx.lineWidth=1;
+  ctx.font='600 10px '+font; ctx.fillStyle=css('--sec'); ctx.textAlign='center';
+  for(let h=0;h<=24;h+=3){
+    const x=X(h*60);
+    ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+plotH); ctx.stroke();
+    ctx.fillText(String(h).padStart(2,'0')+'h', x, H-8);
+  }
+  // eixo Y esquerdo (atividade)
+  ctx.textAlign='right';
+  for(let f=0;f<=1;f+=0.5) ctx.fillText(Math.round(amax*f).toLocaleString('pt-BR'), padL-6, Y(amax*f)+3);
+
+  // área de atividade
+  ctx.beginPath(); ctx.moveTo(X(0),Y(0));
+  for(let m=0;m<1440;m++) ctx.lineTo(X(m),Y(act[m]));
+  ctx.lineTo(X(1439),Y(0)); ctx.closePath();
+  ctx.fillStyle=alphaCol(css('--canvas-bar'),0.22); ctx.fill();
+  ctx.beginPath();
+  for(let m=0;m<1440;m++) m===0? ctx.moveTo(X(m),Y(act[m])) : ctx.lineTo(X(m),Y(act[m]));
+  ctx.strokeStyle=css('--canvas-bar'); ctx.lineWidth=2; ctx.stroke();
+
+  // luz (log, eixo direito)
+  ctx.beginPath();
+  let lmax=0; for(let m=0;m<1440;m++) lmax=Math.max(lmax,Math.log10(light[m]+1)); lmax=Math.max(lmax,2);
+  for(let m=0;m<1440;m++){ const y=padT+plotH*(1-Math.log10(light[m]+1)/lmax/1.05); m===0? ctx.moveTo(X(m),y):ctx.lineTo(X(m),y); }
+  ctx.strokeStyle=css('--amber'); ctx.lineWidth=1.6; ctx.setLineDash([1,0]); ctx.stroke();
+  ctx.fillStyle=css('--amber'); ctx.textAlign='left'; ctx.font='600 10px '+font;
+  for(const d of [0,2,4]) if(d<=lmax) ctx.fillText(d===0?'1 lx':(10**d).toLocaleString('pt-BR')+' lx', W-padR+5, padT+plotH*(1-d/lmax/1.05)+3);
+
+  // cosinor (transforma de log10(PIM+1) para PIM)
+  if(res.cosinor){
+    const c=res.cosinor, w=2*Math.PI/1440;
+    ctx.beginPath();
+    for(let m=0;m<1440;m++){
+      const ylog=c.mesor+c.a*Math.cos(w*m)+c.b*Math.sin(w*m);
+      const v=Math.max(0,10**ylog-1);
+      const y=Y(Math.min(v,amax*1.05));
+      m===0? ctx.moveTo(X(m),y):ctx.lineTo(X(m),y);
+    }
+    ctx.strokeStyle=css('--purple'); ctx.lineWidth=2; ctx.setLineDash([6,5]); ctx.stroke(); ctx.setLineDash([]);
+    // acrofase
+    const xA=X(c.acroMin);
+    ctx.strokeStyle=css('--purple'); ctx.lineWidth=1; ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(xA,padT); ctx.lineTo(xA,padT+plotH); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=css('--purple'); ctx.textAlign='center';
+    ctx.fillText('acrofase '+fmt.clock(c.acroMin), xA, padT+10);
+  }
+}
+
+/* ---------- exportações ---------- */
+function download(name, text, mime='text/csv'){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:mime+';charset=utf-8'}));
+  a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+function csvNights(){
+  const {res, grid}=state; const sep=';';
+  let out='tipo;data_inicio;hora_inicio;hora_fim;TIB_min;TST_min;WASO_min;ES;despertares_1min;despertares_5min;fragmentacao_h;mascarado_min\n';
+  const row=(tipo,nt)=>{const m=nt.m,on=grid.t0+nt.seg[0]*grid.epoch*1000,off=grid.t0+(nt.seg[1]+1)*grid.epoch*1000;
+    return [tipo,fmt.dateFull(on),fmt.clockT(on),fmt.clockT(off),m.tibMin.toFixed(0),m.tstMin.toFixed(0),m.wasoMin.toFixed(0),m.se.toFixed(3),m.awakenings,m.awakenings5,m.fragIndex.toFixed(2),m.maskedMin.toFixed(0)].join(sep)+'\n';};
+  res.nights.forEach(nt=>out+=row('noite',nt));
+  res.naps.forEach(np=>out+=row('cochilo',np));
+  const c=res.cosinor,n=res.npcra;
+  out+='\nresumo;valor\n';
+  out+=`dias_registrados;${res.daysRecorded.toFixed(2)}\nIS;${n.is==null?'':n.is.toFixed(3)}\nIV;${n.iv==null?'':n.iv.toFixed(3)}\nRA;${n.RA==null?'':n.RA.toFixed(3)}\nL5;${n.L5.toFixed(1)}\nL5_onset;${fmt.clock(n.L5onset)}\nM10;${n.M10.toFixed(1)}\nM10_onset;${fmt.clock(n.M10onset)}\n`;
+  if(c) out+=`MESOR_log10;${c.mesor.toFixed(4)}\namplitude_log10;${c.amp.toFixed(4)}\nacrofase;${fmt.clock(c.acroMin)}\nR2;${c.r2.toFixed(3)}\nalgoritmo;${state.algo}\n`;
+  download((state.fileName||'actigrafia').replace(/\.[^.]+$/,'')+'_noites.csv', out);
+}
+function csvEpochs(){
+  const {res, grid}=state;
+  let out='datetime;pim;tat;zcm;temp;light;sono;mascarado;repouso\n';
+  const inSeg=i=>res.segments.some(s=>i>=s[0]&&i<=s[1])?1:0;
+  for(let i=0;i<grid.n;i++){
+    const t=grid.t0+i*grid.epoch*1000, d=new Date(t);
+    const dtStr=`${fmt.dateFull(t)} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
+    const g=k=>Number.isFinite(grid[k][i])?grid[k][i]:'';
+    out+=`${dtStr};${g('pim')};${g('tat')};${g('zcm')};${g('temp')};${g('light')};${res.sleep[i]};${res.masked[i]};${inSeg(i)}\n`;
+  }
+  download((state.fileName||'actigrafia').replace(/\.[^.]+$/,'')+'_epocas.csv', out);
+}
+
+/* ---------- eventos de UI ---------- */
+function segWire(id, key){
+  $(id).addEventListener('click', e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    $(id).querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x===b?'true':'false'));
+    state[key]=b.dataset.v; recompute();
+  });
+}
+segWire('#segAlgo','algo'); segWire('#segChan','chan');
+$('#chkMask').addEventListener('change', e=>{ state.maskTemp=e.target.checked; $('#thrField').style.opacity=e.target.checked?1:.35; recompute(); });
+$('#rngThr').addEventListener('input', e=>{ state.thr=+e.target.value; $('#thrVal').textContent=state.thr.toFixed(1).replace('.',',')+' °C'; });
+$('#rngThr').addEventListener('change', recompute);
+$('#chkLight').addEventListener('change', e=>{ state.showLight=e.target.checked; drawActogram(); });
+
+$('#btnOpen').addEventListener('click', ()=>$('#fileInput').click());
+$('#btnOpen2').addEventListener('click', ()=>$('#fileInput').click());
+$('#fileInput').addEventListener('change', e=>loadFile(e.target.files[0]));
+$('#btnDemo').addEventListener('click', ()=>loadText(CORE.demoText(), 'demonstração_sintética.txt'));
+$('#btnCsvNights').addEventListener('click', csvNights);
+$('#btnCsvEpochs').addEventListener('click', csvEpochs);
+document.querySelectorAll('[data-png]').forEach(b=>b.addEventListener('click', ()=>{
+  const cv=document.getElementById(b.dataset.png);
+  const a=document.createElement('a');
+  a.href=cv.toDataURL('image/png');
+  a.download=(state.fileName||'actigrafia').replace(/\.[^.]+$/,'')+'_'+b.dataset.png.replace('Canvas','')+'.png';
+  a.click();
+}));
+
+const drop=$('#drop');
+drop.addEventListener('click', ()=>$('#fileInput').click());
+drop.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); $('#fileInput').click(); } });
+['dragenter','dragover'].forEach(ev=>document.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev=>document.addEventListener(ev, e=>{ e.preventDefault(); if(ev==='drop'||e.target===document.documentElement) drop.classList.remove('over'); }));
+document.addEventListener('drop', e=>{ const f=e.dataTransfer?.files?.[0]; if(f) loadFile(f); });
+
+let rT; window.addEventListener('resize', ()=>{ clearTimeout(rT); rT=setTimeout(()=>{ if(state.grid){ drawActogram(); drawProfile(); } },150); });
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', ()=>{ if(state.grid){ drawActogram(); drawProfile(); } });
+})();
+</script>
+</body>
+</html>
