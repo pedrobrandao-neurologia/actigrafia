@@ -191,7 +191,7 @@ canvas{display:block; width:100%; border-radius:12px}
 
 /* Table */
 .tbl-wrap{overflow-x:auto; margin-top:10px; border-radius:12px; border:1px solid var(--hair)}
-table{border-collapse:collapse; width:100%; font-size:.85rem; font-variant-numeric:tabular-nums; min-width:900px}
+table{border-collapse:collapse; width:100%; font-size:.85rem; font-variant-numeric:tabular-nums; min-width:1000px}
 th,td{padding:9px 12px; text-align:right; white-space:nowrap}
 th:first-child, td:first-child{text-align:left; position:sticky; left:0; background:var(--surface-solid)}
 thead th{font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--sec); font-weight:600; border-bottom:1px solid var(--hair)}
@@ -231,6 +231,26 @@ details#interpRessalvas ul{margin:8px 0 0 18px; display:grid; gap:6px; line-heig
   font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
   color:var(--sec); background:color-mix(in srgb, var(--text) 4%, transparent);
 }
+
+/* Triagem de transtornos */
+.screen-item{
+  border:1px solid var(--hair); border-radius:14px; padding:13px 16px; margin-top:12px;
+}
+.screen-item > header{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.screen-item > header h4{font-size:.92rem; font-weight:700; letter-spacing:-0.01em}
+.screen-item.compativel{border-color:color-mix(in srgb, var(--red) 35%, transparent); background:color-mix(in srgb, var(--red) 4%, transparent)}
+.screen-item.possivel{border-color:color-mix(in srgb, var(--amber) 40%, transparent); background:color-mix(in srgb, var(--amber) 5%, transparent)}
+.crit-list{list-style:none; margin:9px 0 0; padding:0; display:grid; gap:4px}
+.crit-list li{font-size:.8rem; line-height:1.45; color:var(--sec); display:flex; gap:8px}
+.crit-list li i{font-style:normal; flex-shrink:0; width:16px; text-align:center; font-weight:700}
+.crit-list li.met i{color:var(--green)}
+.crit-list li.unmet i{color:var(--ter)}
+.screen-item .clin{margin-top:8px; font-size:.76rem; color:var(--ter); line-height:1.5}
+.screen-item .clin b{color:var(--sec); font-weight:650}
+.screen-none{margin-top:12px; font-size:.82rem; color:var(--sec); line-height:1.5}
+.badge.ev{background:color-mix(in srgb, var(--green) 16%, transparent); color:var(--green)}
+.badge.ev.f{background:color-mix(in srgb, var(--blue) 14%, transparent); color:var(--blue)}
+.badge.ev.m{background:color-mix(in srgb, var(--text) 8%, transparent); color:var(--sec)}
 
 /* Settings row */
 .settings{display:flex; gap:18px 26px; flex-wrap:wrap; align-items:center; margin-top:8px; font-size:.85rem}
@@ -359,6 +379,14 @@ details#interpRessalvas ul{margin:8px 0 0 18px; display:grid; gap:6px; line-heig
       <div id="interpPadroes"></div>
       <div class="tbl-wrap"><table id="interpTable"></table></div>
       <details id="interpRessalvas"><summary>Ressalvas de interpretação</summary><ul></ul></details>
+    </div>
+
+    <div class="card fade-in" id="screenCard">
+      <header>
+        <h3>Triagem de transtornos do sono</h3>
+        <span class="sub">padrões actigráficos segundo CIDS-3-TR e Consenso Brasileiro — sugestão de hipótese, nunca diagnóstico</span>
+      </header>
+      <div id="screenBody"></div>
     </div>
 
     <div class="card fade-in">
@@ -605,7 +633,7 @@ function detectSegments(sleep, masked, epochMin, actS, restThr){
     }
     merged.push(s.slice());
   }
-  const minLen = Math.round(15/epochMin);
+  const minLen = Math.round(10/epochMin); // episódios ≥ 10 min (Consenso ABS)
   return merged.filter(s => s[1]-s[0]+1 >= minLen);
 }
 
@@ -655,7 +683,7 @@ function buildIntervals(segments, sleep, masked, g, actS, restThr){
 
 function segMetrics(iv, sleep, masked, epochMin, act){
   const {a, b, onset} = iv;
-  let tst=0, mk=0, trans=0, awak1=0, awak5=0, prev=null, wakeRun=0, validPost=0, sleepPost=0;
+  let mk=0, trans=0, awak1=0, awak5=0, prev=null, wakeRun=0, validPost=0, sleepPost=0;
   /* índice de fragmentação no padrão Actiware: % de épocas móveis +
      % de bouts imóveis de 1 min; época móvel se contagens ≥ segundos/15 */
   const mobThr = (epochMin*60)/15;
@@ -663,7 +691,6 @@ function segMetrics(iv, sleep, masked, epochMin, act){
   for(let i=a;i<=b;i++){
     if(masked[i]){ mk++; continue; }
     const s = sleep[i];
-    if(s) tst++;
     if(i >= onset){
       validPost++; if(s) sleepPost++;
       if(prev!==null && s!==prev) trans++;
@@ -677,11 +704,13 @@ function segMetrics(iv, sleep, masked, epochMin, act){
     }
   }
   if(immRun>0){ bouts++; if(immRun*epochMin<=1) bouts1++; }
-  const tibMin = (b-a+1)*epochMin, tstMin = tst*epochMin, mkMin = mk*epochMin;
+  /* Nomenclatura do Consenso ABS: FPR = deitar → fim (substitui "tempo na
+     cama"); FPS = HIS → HFS; TTS = FPS − WASO; ES = TTS/FPR. */
+  const tibMin = (b-a+1)*epochMin, tstMin = sleepPost*epochMin, mkMin = mk*epochMin;
   const validMin = tibMin - mkMin;
   return {
     a, b, onset, solSource: iv.solSource, truncated: !!iv.truncated,
-    tibMin, tstMin, solMin:(onset-a)*epochMin,
+    tibMin, tstMin, fpsMin:(b+1-onset)*epochMin, solMin:(onset-a)*epochMin,
     wasoMin: Math.max(0, (validPost - sleepPost)*epochMin),
     se: validMin>0 ? tstMin/validMin : 0,
     awakenings: awak1, awakenings5: awak5,
@@ -703,6 +732,123 @@ function circStats(mins){
   let mean = Math.atan2(sy/n, sx/n)/w;
   mean = ((mean%1440)+1440)%1440;
   return {mean, sd: R>0 ? Math.sqrt(-2*Math.log(R))/w : null, R, n};
+}
+
+/* ---- Decisão graduada de HIS/HFS (Consenso ABS, Quadros 1 e 2) ----
+   A atividade é a variável-base (sempre presente, por construção do
+   segmento). Sinais adicionais: botão de evento, luz e temperatura.
+   3 sinais além da atividade = muito forte; 2 = forte; ≤ 1 = moderado. */
+function meanRange(arr, masked, i0, i1, n){
+  let s=0, c=0;
+  for(let i=Math.max(0,i0); i<=Math.min(n-1,i1); i++){
+    if(masked[i] || !Number.isFinite(arr[i])) continue;
+    s+=arr[i]; c++;
+  }
+  return c ? s/c : null;
+}
+function gradeBoundary(g, masked, idxBefore, idxAfter, kind, hasEvent){
+  const w = Math.max(1, Math.round(45/g.epochMin));
+  const lb = meanRange(g.light, masked, idxBefore-w, idxBefore-1, g.n);
+  const la = meanRange(g.light, masked, idxAfter, idxAfter+w-1, g.n);
+  const tb = meanRange(g.temp, masked, idxBefore-w, idxBefore-1, g.n);
+  const ta = meanRange(g.temp, masked, idxAfter, idxAfter+w-1, g.n);
+  const sinais = [];
+  if(hasEvent) sinais.push('evento');
+  if(lb!=null && la!=null &&
+     (kind==='his' ? (lb>=5 && la<=Math.max(3, lb/3)) : (la>=5 && lb<=Math.max(3, la/3))))
+    sinais.push('luz');
+  if(tb!=null && ta!=null &&
+     (kind==='his' ? ta-tb>=0.3 : tb-ta>=0.3))
+    sinais.push('temperatura');
+  return {nivel: sinais.length>=3 ? 'muito forte' : sinais.length===2 ? 'forte' : 'moderado',
+    sinais: ['atividade', ...sinais]};
+}
+
+/* ---- Fase por noite: meio do sono, dias úteis × livres, deriva ---- */
+function nightPhase(g, full){
+  const clockOf = idx => (((g.t0 + idx*g.epoch*1000)/MIN)%1440+1440)%1440;
+  const pts = full.map(x=>{
+    const tMid = g.t0 + ((x.m.onset + x.m.b + 1)/2)*g.epoch*1000;
+    const tOff = g.t0 + (x.m.b+1)*g.epoch*1000;
+    return { day:(tMid-g.t0)/86400000, mid:((tMid/MIN)%1440+1440)%1440,
+      offClock: clockOf(x.m.b+1), onClock: clockOf(x.m.onset),
+      offDow: new Date(tOff).getUTCDay(), m: x.m };
+  });
+  /* deriva de fase: desdobra os meios do sono e ajusta reta vs. dia */
+  let drift = null;
+  if(pts.length >= 5){
+    const un=[]; let prev=null;
+    for(const p of pts){
+      let v=p.mid;
+      if(prev!=null){ while(v-prev>720) v-=1440; while(prev-v>720) v+=1440; }
+      un.push(v); prev=v;
+    }
+    const xs=pts.map(p=>p.day), n=xs.length;
+    const mx=xs.reduce((a,b)=>a+b,0)/n, my=un.reduce((a,b)=>a+b,0)/n;
+    let sxx=0,sxy=0,syy=0;
+    for(let i=0;i<n;i++){ sxx+=(xs[i]-mx)**2; sxy+=(xs[i]-mx)*(un[i]-my); syy+=(un[i]-my)**2; }
+    if(sxx>0 && syy>0) drift={slopeMinPerDay:sxy/sxx, r2:(sxy*sxy)/(sxx*syy), nights:n};
+  }
+  /* dias úteis (fim do sono seg–sex) × dias livres (sáb–dom) */
+  const isFree = p => p.offDow===0 || p.offDow===6;
+  const grp = list => list.length>=2 ? {
+    n:list.length,
+    tstMin:list.reduce((a,p)=>a+p.m.tstMin,0)/list.length,
+    solMin:list.reduce((a,p)=>a+p.m.solMin,0)/list.length,
+    mid:circStats(list.map(p=>p.mid)),
+    onset:circStats(list.map(p=>p.onClock)),
+    offset:circStats(list.map(p=>p.offClock))
+  } : null;
+  const uteis = grp(pts.filter(p=>!isFree(p))), livres = grp(pts.filter(isFree));
+  let semana=null;
+  if(uteis && livres){
+    let d = livres.mid.mean - uteis.mid.mean;
+    while(d>720) d-=1440; while(d<-720) d+=1440;
+    semana = {uteis, livres, jetlagSocialMin:d,
+      extensaoTSTMin: livres.tstMin - uteis.tstMin,
+      despertarInduzido: uteis.offset.sd!=null && uteis.offset.sd<45 &&
+        (livres.tstMin-uteis.tstMin)>=30};
+  }
+  return {pts, drift, semana};
+}
+
+/* ---- Periodograma χ² (Sokolove–Bushell) sobre PIM, 20–28 h ---- */
+function periodogram(g, masked){
+  const binMin = Math.max(5, g.epochMin);
+  const per = Math.max(1, Math.round(binMin/g.epochMin));
+  const nb = Math.floor(g.n/per);
+  if(nb*binMin < 3*1440) return null; // exige ≥ 3 dias
+  const x = new Float64Array(nb);
+  let sum=0, cnt=0;
+  for(let bi=0; bi<nb; bi++){
+    let s=0, c=0;
+    for(let k=bi*per; k<(bi+1)*per; k++){
+      if(masked[k] || !Number.isFinite(g.pim[k])) continue;
+      s+=g.pim[k]; c++;
+    }
+    x[bi] = c ? s/c : NaN;
+    if(c){ sum+=x[bi]; cnt++; }
+  }
+  if(cnt < nb*0.7) return null;
+  const gm = sum/cnt;
+  for(let i=0;i<nb;i++) if(!Number.isFinite(x[i])) x[i]=gm;
+  const Pmin = Math.round(20*60/binMin), Pmax = Math.min(Math.round(28*60/binMin), Math.floor(nb/2));
+  if(Pmax < Pmin) return null;
+  let best=null;
+  for(let P=Pmin; P<=Pmax; P++){
+    const K = Math.floor(nb/P), N = K*P;
+    let M=0; for(let i=0;i<N;i++) M+=x[i]; M/=N;
+    const col = new Float64Array(P);
+    for(let i=0;i<N;i++) col[i%P]+=x[i];
+    let ssb=0; for(let h=0;h<P;h++){ const mh=col[h]/K; ssb+=(mh-M)*(mh-M); }
+    let sst=0; for(let i=0;i<N;i++) sst+=(x[i]-M)*(x[i]-M);
+    if(sst<=0) continue;
+    const Q = K*N*ssb/sst, df=P-1;         // Q ~ χ²(P−1) sob H0
+    const z = (Q-df)/Math.sqrt(2*df);
+    if(!best || z>best.z) best={periodMin:P*binMin, z, df};
+  }
+  if(best) best.significant = best.z > 4;
+  return best;
 }
 
 /* Episódio principal por janela meio-dia → meio-dia */
@@ -728,7 +874,7 @@ function assignNights(intervals, g){
       const dur=len(iv)*g.epochMin;
       /* blocos cortados pelo início/fim do registro não são caracterizáveis
          como cochilo — sua duração real é desconhecida */
-      if(dur>=15 && dur<=240 && iv.a>0 && iv.b<g.n-1) naps.push({win:w, iv});
+      if(dur>=10 && dur<=240 && iv.a>0 && iv.b<g.n-1) naps.push({win:w, iv});
     }
   }
   return {nights, naps};
@@ -876,16 +1022,27 @@ function analyze(g, opts){
     const w = noonWin(g.t0 + i*g.epoch*1000);
     sleepByWin.set(w, (sleepByWin.get(w)||0) + g.epochMin);
   }
+  const evNear = (idx, winMin) => {
+    const w = Math.round(winMin/g.epochMin);
+    for(let i=Math.max(0,idx-w); i<=Math.min(g.n-1,idx+w); i++) if(g.event[i]) return true;
+    return false;
+  };
+  const withMetrics = x => {
+    const m = segMetrics(x.iv, sleep, masked, g.epochMin, zcm);
+    m.evidHIS = gradeBoundary(g, masked, m.a, m.onset, 'his', m.solSource==='evento');
+    m.evidHFS = gradeBoundary(g, masked, m.b+1, m.b+1, 'hfs', evNear(m.b+1, 30));
+    return {...x, m};
+  };
   const nightMetrics = nights.map(nt => {
-    const m = segMetrics(nt.iv, sleep, masked, g.epochMin, zcm);
+    const x = withMetrics(nt), m = x.m;
     const winSleepMin = sleepByWin.get(nt.win) || 0;
     /* o episódio principal deveria conter quase todo o sono da janela de 24 h;
        se não contém, a noite está partida em episódios separados */
     m.winSleepMin = winSleepMin;
     m.split = winSleepMin > 0 && m.tstMin < 0.7*winSleepMin;
-    return {...nt, m};
+    return x;
   });
-  const napMetrics = naps.map(np => ({...np, m: segMetrics(np.iv, sleep, masked, g.epochMin, zcm)}));
+  const napMetrics = naps.map(withMetrics);
   /* médias e horários usam apenas noites completas (não cortadas pelas
      bordas do registro), que teriam TIB/TST/SOL subestimados */
   const full = nightMetrics.filter(x=>!x.m.truncated);
@@ -906,6 +1063,8 @@ function analyze(g, opts){
   return {masked, sleep, segments, intervals, nights:nightMetrics, nightsFull:full, naps:napMetrics,
     cosinor:cos, npcra:{...np, ...lm, cfi: cfiFrom(np.is, np.iv, lm.RA)},
     profAct, profLight, profSleep, schedule,
+    phase: nightPhase(g, full),
+    periodo: periodogram(g, masked),
     maskedFraction: g.n ? 1 - unmasked/g.n : 1,
     daysRecorded: unmasked*g.epochMin/1440,
     spanDays: g.n*g.epochMin/1440};
@@ -1145,6 +1304,29 @@ function build(res, cfg){
     ref:'sem cutoff validado; desvio-padrão circular > 1 h indica horários irregulares',
     nota:'Comparar dias úteis e dias livres quando o registro permitir.'}));
 
+  const sem = res.phase ? res.phase.semana : null;
+  const dr = res.phase ? res.phase.drift : null;
+  const per = res.periodo;
+  itens.push(it({grupo:'horarios', chave:'JETLAG', rotulo:'Jetlag social',
+    bruto: sem? sem.jetlagSocialMin : null,
+    valor: sem? (sem.jetlagSocialMin>=0?'+':'−')+fmt.hm(Math.abs(sem.jetlagSocialMin)) : '—',
+    status: !sem? ND : Math.abs(sem.jetlagSocialMin)<60? NORMAL : Math.abs(sem.jetlagSocialMin)<=120? LIMIT : ALT,
+    orientativo:true,
+    ref:'diferença do meio do sono entre dias livres (fim sáb–dom) e úteis; ≥ 2 h associa-se a piores desfechos metabólicos',
+    nota: sem? `TST médio: ${fmt.hm(sem.uteis.tstMin)} nos dias úteis e ${fmt.hm(sem.livres.tstMin)} nos livres (${sem.uteis.n}/${sem.livres.n} noites).` : 'Requer ≥ 2 noites com fim em dia útil e ≥ 2 com fim em sáb/dom.'}));
+  itens.push(it({grupo:'horarios', chave:'DERIVA', rotulo:'Deriva de fase (meio do sono)',
+    bruto: dr? dr.slopeMinPerDay : null,
+    valor: dr? `${dr.slopeMinPerDay>=0?'+':''}${fmt.n(dr.slopeMinPerDay,0)} min/dia` : '—',
+    status: DESC,
+    ref:'regressão linear dos meios do sono desdobrados; deriva progressiva ≥ 15 min/dia com bom ajuste sugere ritmo diferente de 24 h',
+    nota: dr? `r² = ${fmt.n(dr.r2)} em ${dr.nights} noites.` : 'Requer ≥ 5 noites completas.'}));
+  itens.push(it({grupo:'horarios', chave:'PERIODO', rotulo:'Período dominante (periodograma)',
+    bruto: per? per.periodMin : null,
+    valor: per? `${Math.floor(per.periodMin/60)}h${String(Math.round(per.periodMin%60)).padStart(2,'0')}` : '—',
+    status: DESC,
+    ref:'periodograma χ² (Sokolove–Bushell) sobre PIM, 20–28 h; em ritmo sincronizado espera-se 24 h',
+    nota: per? (per.significant? null : 'Pico não significativo — ritmo fraco ou registro curto.') : 'Requer ≥ 3 dias de registro.'}));
+
   /* ---------- padrões ---------- */
   const alterados = itens.filter(i=>i.status===ALT).map(i=>i.rotulo);
   const limitrofes = itens.filter(i=>i.status===LIMIT).map(i=>i.rotulo);
@@ -1177,6 +1359,130 @@ function build(res, cfg){
       push('Sem desvios relevantes', 'Os parâmetros de sono e as métricas circadianas ficaram dentro das faixas de referência adotadas.');
   }
 
+  /* ---------- triagem de transtornos (CIDS-3-TR / Consenso ABS) ----------
+     Sugestão de hipótese a partir do padrão actigráfico. O diagnóstico é
+     clínico: os critérios de queixa, duração ≥ 3 meses e prejuízo funcional
+     não são verificáveis por actigrafia, e a CIDS exige diário de sono
+     acompanhando o registro. */
+  const triagem = [];
+  const COMP='compatível', POSS='possível', SEM='sem sinais actigráficos', NAV='não avaliável';
+  const crit = (txt, met) => ({txt, met});
+  const addT = (id, nome, status, criterios, clinicos, obs) =>
+    triagem.push({id, nome, status, criterios, clinicos, obs: obs||null});
+  const onsetMean = sch&&sch.onset? sch.onset.mean : null;
+  const offsetMean = sch&&sch.offset? sch.offset.mean : null;
+  const midMean = sch&&sch.mid? sch.mid.mean : null;
+  const durOK7 = dias>=7, durOK14 = dias>=14;
+  const derivaProg = dr && Math.abs(dr.slopeMinPerDay)>=15 && dr.r2>=0.6;
+  const poucasPartidas = nN>0 && nSplit/nN < 0.3;
+  const durTxt = 'Registro ≥ 7 dias (preferencialmente 14), incluindo dias úteis e livres';
+  const CLIN_CRSWD = ['Queixa crônica ou recorrente (insônia e/ou sonolência) associada ao desalinhamento',
+    'Sintomas há ≥ 3 meses', 'Sofrimento ou prejuízo funcional significativo',
+    'Não explicado por outro transtorno do sono, médico, mental ou uso de substância'];
+
+  if(nN >= 3){
+    /* --- atraso de fase (DSWPD) --- */
+    const onsetLate = onsetMean!=null && inWin(onsetMean, 60, 360);       // 01:00–06:00
+    const faseEstavel = sdMid!=null && sdMid<=120 && !derivaProg;
+    const sonoLivreOK = (se!=null && se>=0.85) || (sem && sem.livres.tstMin>=390);
+    addT('dswpd','Atraso de fase sono-vigília (DSWPD)',
+      onsetLate && faseEstavel && poucasPartidas ? (sonoLivreOK? COMP : POSS) : SEM,
+      [crit('Início do sono habitualmente tardio (≥ 01:00; atraso ≥ 2 h sobre o convencional) — início médio '+fmt.clock(onsetMean), onsetLate),
+       crit('Fase atrasada estável, sem deriva progressiva (DP do meio do sono ≤ 2 h)', faseEstavel),
+       crit('Início do sono confiável (menos de 30% das noites partidas em episódios)', poucasPartidas),
+       crit('Sono de duração e qualidade adequadas quando livre (ES ≥ 85% ou TST ≥ 6h30 nos dias livres)', !!sonoLivreOK),
+       crit(durTxt, durOK7)],
+      CLIN_CRSWD,
+      'Marcadores de fase reforçam a hipótese: meio de L5 às '+fmt.clock(midL5)+'. O DLMO (melatonina em luz fraca) é o marcador de fase de referência.');
+
+    /* --- avanço de fase (ASWPD) --- */
+    const onsetEarly = onsetMean!=null && inWin(onsetMean, 17*60, 21*60); // ≤ 21:00
+    const offsetEarly = offsetMean!=null && inWin(offsetMean, 60, 300);   // 01:00–05:00
+    addT('aswpd','Avanço de fase sono-vigília (ASWPD)',
+      onsetEarly && offsetEarly && sdMid!=null && sdMid<=120 && poucasPartidas ? COMP : (onsetEarly||offsetEarly)? POSS : SEM,
+      [crit('Início do sono habitualmente precoce (≤ 21:00) — início médio '+fmt.clock(onsetMean), onsetEarly),
+       crit('Despertar espontâneo precoce (≤ 05:00) — fim médio '+fmt.clock(offsetMean), offsetEarly),
+       crit('Fase avançada estável (DP do meio do sono ≤ 2 h)', sdMid!=null && sdMid<=120),
+       crit(durTxt, durOK7)],
+      CLIN_CRSWD, null);
+  }
+
+  /* --- ritmo irregular (ISWRD) --- */
+  const eps24 = (res.nights.length + res.naps.length)/Math.max(1, res.spanDays);
+  const semPrincipal = 1 - res.nights.length/Math.max(1, Math.round(res.spanDays));
+  const iswA = eps24>=3 || semPrincipal>=0.25;
+  const iswB = ((np.is!=null && np.is<0.5) || (sdMid!=null && sdMid>120)) && !derivaProg;
+  addT('iswrd','Ritmo sono-vigília irregular (ISWRD)',
+    iswA && iswB ? COMP : (iswA||iswB)? POSS : SEM,
+    [crit(`≥ 3 episódios de sono por 24 h ou ausência de episódio principal consolidado (média de ${fmt.n(eps24,1)} episódios/dia; ${Math.round(100*Math.max(0,semPrincipal))}% dos dias sem episódio principal)`, iswA),
+     crit(`Ritmo instável e fragmentado (IS ${fmt.n(np.is)}; DP do meio do sono ${sdMid==null?'—':fmt.hm(sdMid)})`, iswB),
+     crit(durTxt, durOK7)],
+    CLIN_CRSWD,
+    'Contexto típico: demências, lesões cerebrais e transtornos do neurodesenvolvimento. Escalas de trabalho em turnos mimetizam este padrão — correlacionar com a rotina e, se houver turnos, considerar transtorno do trabalho em turnos.');
+
+  /* --- ritmo diferente de 24 h (N24SWD) --- */
+  const perOff = per && per.significant && Math.abs(per.periodMin-1440)>=15;
+  if(dias < 10 || !dr){
+    addT('n24','Ritmo sono-vigília diferente de 24 h (N24SWD)', NAV,
+      [crit('Registro ≥ 14 dias com ≥ 5 noites completas (exigência mínima para detectar deriva)', false)],
+      CLIN_CRSWD, 'Predominante em pessoas cegas sem percepção de luz; raro em videntes. Repetir com registro mais longo se houver suspeita.');
+  } else {
+    addT('n24','Ritmo sono-vigília diferente de 24 h (N24SWD)',
+      derivaProg && perOff ? COMP : (derivaProg||perOff)? POSS : SEM,
+      [crit(`Deriva progressiva e consistente do meio do sono (${dr? (dr.slopeMinPerDay>=0?'+':'')+fmt.n(dr.slopeMinPerDay,0)+' min/dia, r² '+fmt.n(dr.r2):'—'}; exige ≥ 15 min/dia com r² ≥ 0,6)`, !!derivaProg),
+       crit(`Período dominante ≠ 24 h no periodograma (${per? Math.floor(per.periodMin/60)+'h'+String(Math.round(per.periodMin%60)).padStart(2,'0'):'—'})`, !!perOff),
+       crit('Registro ≥ 14 dias', durOK14)],
+      CLIN_CRSWD, 'Predominante em pessoas cegas sem percepção de luz; raro em videntes.');
+  }
+
+  /* --- padrão actigráfico de insônia crônica --- */
+  if(nN >= 3){
+    const fracSOL = N.filter(m=>m.solMin>=30).length/nN;
+    const fracMan = N.filter(m=>m.wasoMin>40 || m.awakenings5>=2).length/nN;
+    const inicio = fracSOL>=0.4;
+    const manut = (fracMan>=0.4 && se!=null && se<0.85) || (nN>0 && nSplit/nN>=0.3);
+    addT('insonia','Insônia crônica (padrão actigráfico)',
+      inicio||manut ? COMP : (fracSOL>=0.25 || (fracMan>=0.4 && se!=null && se<0.87))? POSS : SEM,
+      [crit(`Dificuldade de iniciar o sono: SOL ≥ 30 min em ${Math.round(100*fracSOL)}% das noites (equivale a ≥ 3×/semana quando ≥ 40%)`, inicio),
+       crit(`Dificuldade de manter o sono: WASO > 40 min ou ≥ 2 despertares ≥ 5 min em ${Math.round(100*fracMan)}% das noites com ES < 85%, ou ≥ 30% das noites partidas por despertares com saída da cama (${Math.round(100*(nN? nSplit/nN:0))}%)`, manut),
+       crit('Oportunidade de sono adequada (FPR ≥ 7 h)', avg('tibMin')!=null && avg('tibMin')>=420)],
+      ['Queixa de insônia com insatisfação com o sono','Consequência diurna atribuída ao sono (fadiga, atenção, humor…)',
+       'Frequência ≥ 3×/semana e duração ≥ 3 meses','Ambiente adequado para dormir'],
+      'A actigrafia subestima a SOL sem diário/evento e não diferencia vigília imóvel de sono — na suspeita de insônia paradoxal, compare com o diário de sono. O diagnóstico de insônia é clínico; a actigrafia é sugerida (AASM) como apoio e para diferenciais circadianos.');
+
+    /* --- síndrome do sono insuficiente (SSI) --- */
+    if(sem){
+      const curtoUtil = sem.uteis.tstMin < 420;
+      const extensao = sem.extensaoTSTMin >= 60;
+      const eficiente = (se!=null && se>=0.85) && (sol==null || sol<30);
+      addT('ssi','Síndrome do sono insuficiente (SSI)',
+        curtoUtil && extensao && (sem.despertarInduzido || eficiente) ? COMP :
+        curtoUtil && sem.extensaoTSTMin>=30 ? POSS : SEM,
+        [crit(`TST reduzido nos dias úteis (${fmt.hm(sem.uteis.tstMin)}; < 7 h)`, curtoUtil),
+         crit(`Extensão do sono nos dias livres (+${fmt.hm(Math.max(0,sem.extensaoTSTMin))}; ≥ 1 h)`, extensao),
+         crit('Fim do sono regular nos dias úteis, sugerindo despertar induzido (despertador)', !!sem.despertarInduzido),
+         crit('Sono eficiente e de início rápido quando ocorre (ES ≥ 85%, SOL < 30 min)', !!eficiente)],
+        ['Sonolência diurna ou lapsos de sono irresistíveis','Padrão presente na maioria dos dias por ≥ 3 meses',
+         'A extensão do sono resolve os sintomas'],
+        'A CIDS-3-TR aceita a actigrafia como evidência do critério de tempo de sono menor que o esperado para a idade.');
+    } else {
+      addT('ssi','Síndrome do sono insuficiente (SSI)', NAV,
+        [crit('≥ 2 noites completas com fim em dia útil e ≥ 2 com fim em sábado/domingo', false)],
+        ['Sonolência diurna; extensão do sono em dias livres resolve os sintomas'],
+        'A comparação dias úteis × livres é o núcleo da triagem de SSI — prolongue o registro cobrindo ao menos um fim de semana.');
+    }
+
+    /* --- fragmentação do sono (inespecífica) --- */
+    const fragSono = waso!=null && waso>40 && aw5!=null && aw5>=2;
+    addT('frag','Sono fragmentado (inespecífico)',
+      fragSono ? COMP : (aw5!=null && aw5>=2)? POSS : SEM,
+      [crit(`WASO elevado (${fmt.hm(waso)}; > 40 min)`, waso!=null && waso>40),
+       crit(`≥ 2 despertares ≥ 5 min por noite (${fmt.n(aw5,1)})`, aw5!=null && aw5>=2),
+       crit(`Fragmentação intradiária do ritmo (IV ${fmt.n(np.iv)} ≥ 1 ou índice de fragmentação ≥ 35)`, (np.iv!=null&&np.iv>=1)||(fmob!=null&&fmob>=35))],
+      ['Investigar causas específicas: apneia obstrutiva do sono, movimentos periódicos dos membros, dor, medicações, ambiente'],
+      'A actigrafia mostra a fragmentação, mas não a causa: AOS exige PSG ou teste domiciliar, e a AASM recomenda fortemente NÃO usar actigrafia no lugar da EMG para movimentos periódicos dos membros.');
+  }
+
   /* ---------- síntese ---------- */
   let sintese = `Registro de ${fmt.n(dias,1)} dias válidos com ${nN} noite(s) completa(s) analisada(s)`;
   sintese += res.naps.length? ` e ${res.naps.length} cochilo(s). ` : '. ';
@@ -1194,10 +1500,14 @@ function build(res, cfg){
   ressalvas.push('As métricas circadianas não paramétricas (IS, IV, RA) não têm cutoffs clínicos validados; as faixas adotadas vêm de coortes de adultos saudáveis. IS e RA diminuem e IV aumenta com a idade, de modo que a interpretação deve considerar a faixa etária.');
   ressalvas.push('O Consenso Brasileiro de Actigrafia (ABS, 2021) padroniza as definições (fase principal de repouso, ES = TTS/FPR, cochilos ≥ 10 min, mínimo de 5–7 dias de registro), mas deliberadamente não fixa valores de normalidade.');
   ressalvas.push('A comparação intraindividual (pré e pós-tratamento, dias úteis versus dias livres) é o uso mais robusto da actigrafia — priorize-a sobre a comparação com limiares populacionais.');
+  ressalvas.push('A triagem de transtornos é uma sugestão de hipótese baseada apenas no padrão actigráfico. Nenhum diagnóstico da CIDS-3-TR pode ser firmado sem avaliação clínica: os critérios de queixa, duração ≥ 3 meses e prejuízo funcional não são verificáveis pelo actígrafo, e a classificação pede diário de sono acompanhando o registro. A separação dias úteis × livres presume fim de semana livre (sáb/dom) — inválida para escalas atípicas.');
   ressalvas.push('A actigrafia infere sono a partir da imobilidade: tende a superestimar TST e ES e a subestimar WASO e latência em relação à polissonografia.');
   ressalvas.push(`Escoragem por ${cfg.algo==='ck'?'Cole-Kripke':'Sadeh'} sobre ZCM, épocas de ${cfg.epochMin} min. Interpretação automatizada de apoio — não substitui a leitura do actograma nem o julgamento clínico.`);
 
-  return {qualidade, alertas, itens, padroes, sintese, ressalvas,
+  const compat = triagem.filter(t=>t.status===COMP);
+  if(compat.length) sintese += ` Triagem: padrão compatível com ${compat.map(t=>t.nome.replace(/ \(.*\)$/,'')).join('; ')} — hipóteses a confirmar clinicamente.`;
+
+  return {qualidade, alertas, itens, padroes, triagem, sintese, ressalvas,
     contagem:{alterado:alterados.length, limitrofe:limitrofes.length,
       normal:itens.filter(i=>i.status===NORMAL).length}};
 }
@@ -1237,11 +1547,15 @@ const METHODS = [
   ['Escoragem sono-vigília',
    'Aplicada ao canal ZCM em épocas de 1 min: Cole-Kripke (janela de 7 min; sono se D &lt; 1; Cole et al., <i>Sleep</i> 1992) ou Sadeh (janela de 11 min, contagens truncadas em 300; sono se PS ≥ 0; Sadeh et al., <i>Sleep</i> 1994). Ambos foram derivados contra PSG em actígrafos AMI; a aplicação a outros dispositivos assume comparabilidade das contagens ZCM.'],
   ['Períodos de repouso',
-   'Detecção automática: densidade de sono (média móvel de ±15 min) &gt; 0,5; blocos separados por &lt; 30 min são fundidos, e também os separados por até 180 min quando a atividade no intervalo permanece abaixo do limiar de repouso (um despertar longo dentro da cama não parte a noite em dois); blocos &lt; 15 min são descartados. O maior bloco (≥ 2 h) de cada janela meio-dia→meio-dia é o episódio principal; blocos de 15–240 min são cochilos, exceto os cortados pelas bordas do registro, cuja duração real é desconhecida. Quando o episódio principal contém menos de 70% do sono da janela de 24 h, a interpretação sinaliza que a noite está partida.'],
+   'Detecção automática: densidade de sono (média móvel de ±15 min) &gt; 0,5; blocos separados por &lt; 30 min são fundidos, e também os separados por até 180 min quando a atividade no intervalo permanece abaixo do limiar de repouso (um despertar longo dentro da cama não parte a noite em dois); blocos &lt; 10 min são descartados (episódios secundários contam a partir de 10 min, conforme o Consenso ABS). O maior bloco (≥ 2 h) de cada janela meio-dia→meio-dia é o episódio principal; blocos de 15–240 min são cochilos, exceto os cortados pelas bordas do registro, cuja duração real é desconhecida. Quando o episódio principal contém menos de 70% do sono da janela de 24 h, a interpretação sinaliza que a noite está partida.'],
   ['Deitar e latência de sono (SOL)',
    'O horário de deitar ("luzes apagadas") vem do marcador de evento do actígrafo quando existe um até 180 min antes do início do sono; na ausência dele, é estimado recuando até 120 min a partir do bloco de repouso enquanto a atividade suavizada (média móvel de ±5 min de PIM) permanece abaixo do limiar de repouso, sem invadir o episódio anterior. O limiar de repouso é 20% da atividade média da janela M10 do próprio indivíduo, o que o torna independente da escala de contagens do aparelho. O início do sono é a primeira janela de 10 min com no máximo 1 época de vigília. SOL = início do sono − deitar. A coluna "origem" nas exportações indica se o deitar veio de <i>evento</i> ou de <i>atividade</i>; a estimativa por atividade é um proxy e tende a subestimar a latência em relação ao diário de sono.'],
+  ['Nomenclatura do Consenso Brasileiro de Actigrafia (ABS, 2021)',
+   'FPR (fase principal de repouso) = deitar → fim do episódio, substituindo o impreciso "tempo na cama"; FPS (fase principal de sono) = HIS → HFS; TTS = FPS − WASO; ES = TTS/FPR × 100. Episódios secundários de sono (cochilos) são contados a partir de 10 min. HIS e HFS são validados pela decisão graduada abaixo.'],
+  ['Decisão graduada de HIS e HFS (Consenso ABS, Quadros 1 e 2)',
+   'A atividade é a variável-base e está sempre presente por construção. Cada limite é reforçado pelos sinais auxiliares disponíveis: botão de evento (até 180 min antes do HIS; ±30 min do HFS), luz (queda para ≤ 1/3 no HIS ou subida ≥ 3× no HFS, janelas de 45 min) e temperatura do punho (subida ≥ 0,3 °C ao adormecer, queda ao despertar). Três sinais além da atividade = decisão <b>muito forte</b> (MF); dois = <b>forte</b> (F); um ou nenhum = <b>moderada</b> (M). O nível aparece por noite na tabela e nas exportações.'],
   ['Parâmetros por episódio',
-   'TIB = deitar → fim do episódio; TST = épocas escoradas como sono no TIB; WASO = vigília entre o início do sono e o fim do episódio; ES = TST/TIB (excluídas épocas mascaradas); despertares = sequências de vigília ≥ 1 min (≥ 5 min entre parênteses) após o início do sono; fragmentação = transições sono↔vigília por hora de TST.'],
+   'FPR/TIB = deitar → fim do episódio; TTS = épocas escoradas como sono entre o início e o fim do sono (TTS = FPS − WASO); WASO = vigília entre o início do sono e o fim do episódio; ES = TTS/FPR (excluídas épocas mascaradas); despertares = sequências de vigília ≥ 1 min (≥ 5 min entre parênteses) após o início do sono; fragmentação = transições sono↔vigília por hora de TTS.'],
   ['Dia médio',
    'Perfil de 24 h obtido pela média de todas as épocas do registro alinhadas pelo minuto do dia (0–1439), com épocas mascaradas excluídas — atividade (PIM), probabilidade de sono (proporção de dias escorados como sono naquele minuto) e luz. É a base do cálculo de L5 e M10 e pode ser exportado minuto a minuto em CSV/JSON.'],
   ['Cosinor',
@@ -1250,6 +1564,10 @@ const METHODS = [
    'Van Someren et al., 1999. IS (estabilidade interdiária) e IV (variabilidade intradiária) calculados sobre médias horárias de PIM; L5 e M10 por janelas móveis circulares de 5 h e 10 h sobre o dia médio por minuto, com os respectivos horários de início; RA = (M10−L5)/(M10+L5). Requer ≥ 3 dias completos para interpretação confiável (≥ 48 h válidas para o cálculo de IS/IV).'],
   ['Índice de função circadiana (CFI)',
    'Ortiz-Tudela et al., <i>PLoS Comput Biol</i> 2010. CFI = média aritmética de IS, do IV normalizado [(2 − IV)/2] e de RA, cada termo limitado ao intervalo 0–1. Varia de 0 (ausência de ritmo circadiano detectável) a 1 (ritmo robusto e estável). Só é reportado quando IS, IV e RA estão todos disponíveis.'],
+  ['Dias úteis × dias livres, jetlag social e deriva de fase',
+   'As noites completas são separadas pelo dia em que o sono termina: sábado e domingo contam como dias livres (a divisão presume fim de semana livre — inválida para escalas atípicas). Jetlag social = diferença do meio do sono entre dias livres e úteis; a extensão do TST nos dias livres e um fim de sono rígido nos dias úteis (DP < 45 min) sugerem despertar induzido por despertador. A deriva de fase é a inclinação da regressão linear dos meios do sono desdobrados (min/dia), e o período dominante vem do periodograma χ² de Sokolove–Bushell sobre PIM em caixas de 5 min, varrendo 20–28 h — em ritmo sincronizado espera-se pico significativo em 24 h.'],
+  ['Triagem de transtornos do sono',
+   'Regras fixas confrontam o padrão actigráfico com os critérios da CIDS-3-TR e do Consenso ABS que a actigrafia consegue examinar: atraso e avanço de fase (início médio do sono e estabilidade da fase), ritmo irregular (episódios por 24 h, IS e dispersão do meio do sono), ritmo diferente de 24 h (deriva progressiva + periodograma; exige ≥ 14 dias), padrão de insônia (SOL ≥ 30 min ou má manutenção em ≥ 40% das noites ≈ ≥ 3×/semana), síndrome do sono insuficiente (TST útil < 7 h + extensão ≥ 1 h nos dias livres + despertar induzido) e sono fragmentado inespecífico. Cada hipótese lista os critérios verificados e os que dependem da avaliação clínica — queixa, duração ≥ 3 meses e prejuízo funcional nunca são verificáveis pelo actígrafo. A CIDS-3-TR exige diário de sono junto do registro; a AASM classifica o apoio da actigrafia nesses cenários como recomendação condicional e recomenda fortemente NÃO usá-la no lugar da EMG para movimentos periódicos dos membros.'],
   ['Interpretação automatizada',
    'Cada parâmetro é classificado como normal, limítrofe ou alterado por regras fixas, e os achados são agregados em padrões (latência prolongada, sono fragmentado, eficiência reduzida, sono curto, ritmo irregular, desvio de fase, horários irregulares, cochilos frequentes). Os limiares de sono seguem os critérios actigráficos quantitativos de Natale et al. (Motionlogger, 2009: SOL &lt; 12 min, ES &gt; 92%, WASO &lt; 25 min; Actiwatch, 2014: SOL &lt; 14 min, ES &gt; 87%, WASO &lt; 40 min, &lt; 2 despertares ≥ 5 min, índice de fragmentação &lt; 35, atividade média &lt; 16 movimentos/min) e os limiares clínicos difundidos (TST 7–9 h, ES ≥ 85%, SOL ≥ 30 min para insônia de início). As faixas circadianas (IS ≈ 0,6, IV &lt; 1, RA ≥ 0,85) vêm de coortes de adultos saudáveis e não são cutoffs clínicos validados. <b>Nenhum desses limiares foi derivado com o ActTrust</b> — são referências orientadoras, e a comparação intraindividual é sempre mais robusta.'],
   ['Índice de fragmentação e atividade motora',
@@ -1305,11 +1623,11 @@ function renderMetrics(){
   const avg = k => N.length? N.reduce((a,m)=>a+m[k],0)/N.length : null;
   const seAvg = N.length? N.reduce((a,m)=>a+m.se,0)/N.length : null;
   const few = res.daysRecorded < 3;
-  const cos = res.cosinor, np = res.npcra;
+  const cos = res.cosinor, np = res.npcra, sem = res.phase? res.phase.semana : null;
   const cards = [
     {label:'Dias registrados', value:fmt.n(res.daysRecorded,1), note:`${res.nights.length} noites · ${res.naps.length} cochilos`, warn:few},
-    {label:'TST médio', value:fmt.hm(avg('tstMin')), note:'tempo total de sono/noite'},
-    {label:'Eficiência média', value:fmt.pct(seAvg), note:'TST / TIB', warn:seAvg!=null&&seAvg<0.85},
+    {label:'TTS médio', value:fmt.hm(avg('tstMin')), note:'tempo total de sono por noite (FPS − WASO)'},
+    {label:'Eficiência média', value:fmt.pct(seAvg), note:'TTS / FPR (Consenso ABS)', warn:seAvg!=null&&seAvg<0.85},
     {label:'Latência média', value:fmt.hm(avg('solMin')), note:'SOL — deitar → sono sustentado', warn:avg('solMin')!=null&&avg('solMin')>30},
     {label:'WASO médio', value:fmt.hm(avg('wasoMin')), note:'vigília após início do sono'},
     {label:'Despertares/noite', value:fmt.n(avg('awakenings'),1), note:`≥ 1 min · ${fmt.n(avg('awakenings5'),1)} com ≥ 5 min`},
@@ -1319,6 +1637,12 @@ function renderMetrics(){
     {label:'RA', value:fmt.n(np.RA), note:'amplitude relativa (M10−L5)/(M10+L5)'},
     {label:'M10', value:fmt.n(np.M10,0), note:`início ${fmt.clock(np.M10onset)} · PIM/época`},
     {label:'L5', value:fmt.n(np.L5,0), note:`início ${fmt.clock(np.L5onset)} · PIM/época`},
+    {label:'Período dominante', value: res.periodo? `${Math.floor(res.periodo.periodMin/60)}h${String(Math.round(res.periodo.periodMin%60)).padStart(2,'0')}` : '—',
+      note:'periodograma χ²'+(res.periodo&&!res.periodo.significant?' · não significativo':''),
+      warn: res.periodo&&res.periodo.significant&&Math.abs(res.periodo.periodMin-1440)>=15},
+    {label:'Jetlag social', value: sem? (sem.jetlagSocialMin>=0?'+':'−')+fmt.hm(Math.abs(sem.jetlagSocialMin)) : '—',
+      note: sem? `TST útil ${fmt.hm(sem.uteis.tstMin)} · livre ${fmt.hm(sem.livres.tstMin)}` : 'requer noites úteis e livres',
+      warn: sem&&Math.abs(sem.jetlagSocialMin)>120},
     {label:'Acrofase', value:cos? fmt.clock(cos.acroMin):'—', note:'cosinor 24 h'},
     {label:'Amplitude', value:cos? fmt.n(cos.amp):'—', note:'log₁₀(PIM+1), cosinor'},
     {label:'MESOR', value:cos? fmt.n(cos.mesor):'—', note:`R² = ${cos? fmt.n(cos.r2):'—'}`},
@@ -1361,9 +1685,36 @@ function renderInterp(){
   $('#interpTable').innerHTML =
     `<thead><tr><th>Parâmetro</th><th>Valor</th><th>Classificação</th><th>Referência adotada</th></tr></thead><tbody>${rows}</tbody>`;
   $('#interpRessalvas').querySelector('ul').innerHTML = I.ressalvas.map(r=>`<li>${esc(r)}</li>`).join('');
+  renderScreening(I);
+}
+
+const SCREEN_PILL = {'compatível':'alterado', 'possível':'limitrofe',
+  'sem sinais actigráficos':'normal', 'não avaliável':'indeterminado'};
+function renderScreening(I){
+  const shown = I.triagem.filter(t=>t.status!=='sem sinais actigráficos');
+  const clean = I.triagem.filter(t=>t.status==='sem sinais actigráficos');
+  const cls = t => t.status==='compatível'?'compativel': t.status==='possível'?'possivel':'';
+  let html = shown.map(t=>`
+    <div class="screen-item ${cls(t)}">
+      <header><h4>${esc(t.nome)}</h4><span class="pill ${SCREEN_PILL[t.status]}">${esc(t.status)}</span></header>
+      <ul class="crit-list">${t.criterios.map(c=>`
+        <li class="${c.met?'met':'unmet'}"><i>${c.met?'✓':'✗'}</i><span>${esc(c.txt)}</span></li>`).join('')}
+      </ul>
+      <p class="clin"><b>Dependem da avaliação clínica:</b> ${t.clinicos.map(esc).join('; ')}.${t.obs?` <em>${esc(t.obs)}</em>`:''}</p>
+    </div>`).join('');
+  if(clean.length)
+    html += `<p class="screen-none"><b>Sem sinais actigráficos:</b> ${clean.map(t=>esc(t.nome)).join(' · ')}.</p>`;
+  html += `<p class="screen-none">A triagem sugere hipóteses a partir do padrão de repouso-atividade; queixa, duração dos sintomas e prejuízo funcional só podem ser estabelecidos clinicamente, e a CIDS-3-TR exige diário de sono acompanhando a actigrafia.</p>`;
+  $('#screenBody').innerHTML = html;
 }
 
 const tAt = i => state.grid.t0 + i*state.grid.epoch*1000;
+
+const EV_ABBR = {'muito forte':['MF','ev'], 'forte':['F','ev f'], 'moderado':['M','ev m']};
+function evBadges(m){
+  const b = e => { const [t,c]=EV_ABBR[e.nivel]; return `<span class="badge ${c}" title="${e.sinais.join(' + ')}">${t}</span>`; };
+  return m.evidHIS && m.evidHFS ? `${b(m.evidHIS)} ${b(m.evidHFS)}` : '—';
+}
 
 function renderNights(){
   const {res} = state;
@@ -1377,7 +1728,8 @@ function renderNights(){
       <td>${fmt.hm(m.tibMin)}</td><td>${fmt.hm(m.tstMin)}</td>
       <td>${fmt.hm(m.wasoMin)}</td><td>${fmt.pct(m.se)}</td>
       <td>${m.awakenings} (${m.awakenings5})</td>
-      <td>${fmt.n(m.fragIndex,1)}</td></tr>`;
+      <td>${fmt.n(m.fragIndex,1)}</td>
+      <td>${evBadges(m)}</td></tr>`;
   });
   const N=res.nightsFull.map(n=>n.m);
   if(N.length){
@@ -1386,7 +1738,7 @@ function renderNights(){
       <td>${fmt.hm(avg('solMin'))}</td>
       <td>${fmt.hm(avg('tibMin'))}</td><td>${fmt.hm(avg('tstMin'))}</td>
       <td>${fmt.hm(avg('wasoMin'))}</td><td>${fmt.pct(avg('se'))}</td>
-      <td>${fmt.n(avg('awakenings'),1)}</td><td>${fmt.n(avg('fragIndex'),1)}</td></tr>`);
+      <td>${fmt.n(avg('awakenings'),1)}</td><td>${fmt.n(avg('fragIndex'),1)}</td><td>—</td></tr>`);
   }
   const napRows = res.naps.map(np=>{
     const m=np.m;
@@ -1395,10 +1747,11 @@ function renderNights(){
       <td>${fmt.hm(m.solMin)}</td>
       <td>${fmt.hm(m.tibMin)}</td><td>${fmt.hm(m.tstMin)}</td>
       <td>${fmt.hm(m.wasoMin)}</td><td>${fmt.pct(m.se)}</td>
-      <td>${m.awakenings} (${m.awakenings5})</td><td>${fmt.n(m.fragIndex,1)}</td></tr>`;
+      <td>${m.awakenings} (${m.awakenings5})</td><td>${fmt.n(m.fragIndex,1)}</td>
+      <td>${evBadges(m)}</td></tr>`;
   });
   $('#nightsTable').innerHTML = `
-    <thead><tr><th>Noite</th><th>Deitar</th><th>Início do sono</th><th>Fim</th><th>SOL</th><th>TIB</th><th>TST</th><th>WASO</th><th>ES</th><th>Despertares ≥1′ (≥5′)</th><th>Frag./h</th></tr></thead>
+    <thead><tr><th>Noite</th><th>Deitar</th><th>Início do sono</th><th>Fim</th><th>SOL</th><th title="fase principal de repouso (deitar → fim); substitui o 'tempo na cama' no Consenso ABS">FPR</th><th title="tempo total de sono = FPS − WASO">TTS</th><th>WASO</th><th>ES</th><th>Despertares ≥1′ (≥5′)</th><th>Frag./h</th><th title="decisão graduada do Consenso ABS para o início e o fim do sono (atividade + evento + luz + temperatura)">Decisão HIS·HFS</th></tr></thead>
     <tbody>${rows.join('')}${napRows.join('')}</tbody>`;
 }
 
@@ -1654,7 +2007,8 @@ function resultsPayload(){
   const ep = m => ({
     deitar: isoAt(m.a), inicio_sono: isoAt(m.onset), fim: isoAt(m.b+1),
     origem_deitar: m.solSource, incompleto: !!m.truncated,
-    latencia_sono_min: r3(m.solMin), TIB_min: r3(m.tibMin), TST_min: r3(m.tstMin),
+    decisao_HIS: m.evidHIS || null, decisao_HFS: m.evidHFS || null,
+    latencia_sono_min: r3(m.solMin), FPR_min: r3(m.tibMin), FPS_min: r3(m.fpsMin), TTS_min: r3(m.tstMin),
     WASO_min: r3(m.wasoMin), eficiencia_sono: r3(m.se),
     despertares_1min: m.awakenings, despertares_5min: m.awakenings5,
     fragmentacao_por_hora: r3(m.fragIndex), mascarado_min: r3(m.maskedMin)
@@ -1680,7 +2034,7 @@ function resultsPayload(){
     },
     sono: {
       medias_por_noite: {
-        latencia_sono_min: medias('solMin'), TIB_min: medias('tibMin'), TST_min: medias('tstMin'),
+        latencia_sono_min: medias('solMin'), FPR_min: medias('tibMin'), FPS_min: medias('fpsMin'), TTS_min: medias('tstMin'),
         WASO_min: medias('wasoMin'), eficiencia_sono: medias('se'),
         despertares_1min: medias('awakenings'), despertares_5min: medias('awakenings5'),
         fragmentacao_por_hora: medias('fragIndex')
@@ -1695,7 +2049,9 @@ function resultsPayload(){
         M10: r3(n.M10), M10_inicio: fmt.clock(n.M10onset),
         horas_validas: n.hours
       },
-      cosinor: c ? {MESOR_log10:r3(c.mesor), amplitude_log10:r3(c.amp), acrofase:fmt.clock(c.acroMin), R2:r3(c.r2)} : null
+      cosinor: c ? {MESOR_log10:r3(c.mesor), amplitude_log10:r3(c.amp), acrofase:fmt.clock(c.acroMin), R2:r3(c.r2)} : null,
+      periodograma: res.periodo ? {periodo_min: res.periodo.periodMin, z: r3(res.periodo.z), significativo: res.periodo.significant} : null,
+      deriva_de_fase: res.phase && res.phase.drift ? {min_por_dia: r3(res.phase.drift.slopeMinPerDay), r2: r3(res.phase.drift.r2), noites: res.phase.drift.nights} : null
     },
     horarios: sch ? {
       deitar_medio: sch.bed? fmt.clock(sch.bed.mean):null,
@@ -1705,7 +2061,15 @@ function resultsPayload(){
       dp_circular_min: {
         deitar: sch.bed? r3(sch.bed.sd):null, inicio_sono: sch.onset? r3(sch.onset.sd):null,
         fim_sono: sch.offset? r3(sch.offset.sd):null, meio_do_sono: sch.mid? r3(sch.mid.sd):null
-      }
+      },
+      uteis_vs_livres: (res.phase && res.phase.semana) ? (w => ({
+        criterio: 'dia útil = fim do sono seg–sex; dia livre = sáb–dom',
+        uteis: {noites: w.uteis.n, TTS_min: r3(w.uteis.tstMin), meio_do_sono: fmt.clock(w.uteis.mid.mean), fim_medio: fmt.clock(w.uteis.offset.mean), dp_fim_min: r3(w.uteis.offset.sd)},
+        livres: {noites: w.livres.n, TTS_min: r3(w.livres.tstMin), meio_do_sono: fmt.clock(w.livres.mid.mean), fim_medio: fmt.clock(w.livres.offset.mean), dp_fim_min: r3(w.livres.offset.sd)},
+        jetlag_social_min: r3(w.jetlagSocialMin),
+        extensao_TTS_livres_min: r3(w.extensaoTSTMin),
+        despertar_induzido_em_dias_uteis: !!w.despertarInduzido
+      }))(res.phase.semana) : null
     } : null,
     interpretacao: {
       aviso:'Classificações orientadoras; os limiares não foram validados para o ActTrust. Ver o campo ressalvas.',
@@ -1723,6 +2087,12 @@ function resultsPayload(){
         classificacao:x.status, limiar_orientador:x.orientativo, referencia:x.ref, nota:x.nota
       })),
       padroes: I.padroes,
+      triagem: {
+        aviso: 'Sugestão de hipótese a partir do padrão actigráfico — o diagnóstico é clínico (CIDS-3-TR) e exige diário de sono junto do registro.',
+        hipoteses: I.triagem.map(t=>({id:t.id, nome:t.nome, status:t.status,
+          criterios_actigraficos: t.criterios.map(c=>({criterio:c.txt, atendido:!!c.met})),
+          criterios_clinicos: t.clinicos, observacao: t.obs}))
+      },
       ressalvas: I.ressalvas
     },
     dia_medio: {
@@ -1743,16 +2113,18 @@ function exportJSON(){
 function csvNights(){
   const {res}=state; const sep=';';
   const num = (x,d=2) => (x==null||!isFinite(x)) ? '' : x.toFixed(d).replace('.',',');
-  let out='tipo;data;deitar;inicio_sono;fim;origem_deitar;incompleto;SOL_min;TIB_min;TST_min;WASO_min;eficiencia;despertares_1min;despertares_5min;fragmentacao_h;mascarado_min\n';
+  let out='tipo;data;deitar;inicio_sono;fim;origem_deitar;incompleto;decisao_HIS;decisao_HFS;SOL_min;FPR_min;FPS_min;TTS_min;WASO_min;eficiencia;despertares_1min;despertares_5min;fragmentacao_h;mascarado_min\n';
   const row=(tipo,x)=>{const m=x.m;
     return [tipo, fmt.dateFull(tAt(m.a)), fmt.clockT(tAt(m.a)), fmt.clockT(tAt(m.onset)), fmt.clockT(tAt(m.b+1)),
-      m.solSource, m.truncated?'sim':'nao', num(m.solMin,0), num(m.tibMin,0), num(m.tstMin,0), num(m.wasoMin,0), num(m.se,3),
+      m.solSource, m.truncated?'sim':'nao',
+      m.evidHIS? m.evidHIS.nivel:'', m.evidHFS? m.evidHFS.nivel:'',
+      num(m.solMin,0), num(m.tibMin,0), num(m.fpsMin,0), num(m.tstMin,0), num(m.wasoMin,0), num(m.se,3),
       m.awakenings, m.awakenings5, num(m.fragIndex), num(m.maskedMin,0)].join(sep)+'\n';};
   res.nights.forEach(x=>out+=row('noite',x));
   res.naps.forEach(x=>out+=row('cochilo',x));
   const A=k=>num(avgOf(res.nightsFull,k), k==='se'?3:(k==='fragIndex'?2:0));
   if(res.nightsFull.length)
-    out+=['media', '', '', '', '', '', '', A('solMin'), A('tibMin'), A('tstMin'), A('wasoMin'), A('se'),
+    out+=['media', '', '', '', '', '', '', '', '', A('solMin'), A('tibMin'), A('fpsMin'), A('tstMin'), A('wasoMin'), A('se'),
       num(avgOf(res.nightsFull,'awakenings'),1), num(avgOf(res.nightsFull,'awakenings5'),1), A('fragIndex'), ''].join(sep)+'\n';
   const c=res.cosinor, n=res.npcra;
   out+='\nresumo;valor\n';
@@ -1765,6 +2137,12 @@ function csvNights(){
   I.itens.forEach(x=>out+=[q(x.rotulo), q(x.valor), x.status, x.orientativo?'sim':'nao', q(x.ref), q(x.nota)].join(sep)+'\n');
   out+='\npadrao;descricao\n';
   I.padroes.forEach(p=>out+=`${q(p.titulo)};${q(p.texto)}\n`);
+  const ph=res.phase, w=ph&&ph.semana, drf=ph&&ph.drift, pg=res.periodo;
+  if(pg) out+=`periodo_dominante_min;${pg.periodMin}\nperiodo_significativo;${pg.significant?'sim':'nao'}\n`;
+  if(drf) out+=`deriva_min_por_dia;${num(drf.slopeMinPerDay,1)}\nderiva_r2;${num(drf.r2,2)}\n`;
+  if(w) out+=`TTS_dias_uteis_min;${num(w.uteis.tstMin,0)}\nTTS_dias_livres_min;${num(w.livres.tstMin,0)}\njetlag_social_min;${num(w.jetlagSocialMin,0)}\ndespertar_induzido;${w.despertarInduzido?'sim':'nao'}\n`;
+  out+='\ntriagem;status;observacao\n';
+  I.triagem.forEach(t=>out+=`${q(t.nome)};${t.status};${q(t.obs||'')}\n`);
   out+='\nsintese\n'+q(I.sintese)+'\n';
   if(I.alertas.length){ out+='\nalerta\n'; I.alertas.forEach(a=>out+=q(a)+'\n'); }
   out+='\nressalva\n';
@@ -2005,8 +2383,8 @@ function exportPDF(){
     ['Dias registrados', fmt.n(res.daysRecorded,1)],
     ['Noites analisadas', String(res.nights.length) + (res.nights.length>res.nightsFull.length ? ` (${res.nightsFull.length} completas)` : '')],
     ['Cochilos detectados', String(res.naps.length)],
-    ['Tempo na cama (TIB)', fmt.hm(avgOf(res.nightsFull,'tibMin'))],
-    ['Tempo total de sono (TST)', fmt.hm(avgOf(res.nightsFull,'tstMin'))],
+    ['Fase principal de repouso (FPR)', fmt.hm(avgOf(res.nightsFull,'tibMin'))],
+    ['Tempo total de sono (TTS)', fmt.hm(avgOf(res.nightsFull,'tstMin'))],
     ['Latência de sono (SOL)', fmt.hm(avgOf(res.nightsFull,'solMin'))],
     ['Eficiência de sono', fmt.pct(avgOf(res.nightsFull,'se'))],
     ['WASO', fmt.hm(avgOf(res.nightsFull,'wasoMin'))],
@@ -2033,7 +2411,11 @@ function exportPDF(){
     ['Acrofase (cosinor)', c? fmt.clock(c.acroMin):'—'],
     ['Amplitude (cosinor)', c? fmt.n(c.amp):'—'],
     ['MESOR (cosinor)', c? fmt.n(c.mesor):'—'],
-    ['R² do cosinor', c? fmt.n(c.r2):'—']
+    ['R² do cosinor', c? fmt.n(c.r2):'—'],
+    ['Período dominante (χ²)', res.periodo? `${Math.floor(res.periodo.periodMin/60)}h${p2(Math.round(res.periodo.periodMin%60))}${res.periodo.significant?'':' (n.s.)'}` : '—'],
+    ['Deriva de fase', res.phase&&res.phase.drift? `${res.phase.drift.slopeMinPerDay>=0?'+':''}${fmt.n(res.phase.drift.slopeMinPerDay,0)} min/dia (r² ${fmt.n(res.phase.drift.r2)})` : '—'],
+    ['Jetlag social', res.phase&&res.phase.semana? (res.phase.semana.jetlagSocialMin>=0?'+':'−')+fmt.hm(Math.abs(res.phase.semana.jetlagSocialMin)) : '—'],
+    ['TTS útil / livre', res.phase&&res.phase.semana? `${fmt.hm(res.phase.semana.uteis.tstMin)} / ${fmt.hm(res.phase.semana.livres.tstMin)}` : '—']
   ]);
   if(res.daysRecorded < 3){
     doc.gap(4);
@@ -2090,7 +2472,7 @@ function exportPDF(){
   doc.newPage();
   doc.section('Parâmetros de sono por episódio');
   const cols=[{t:'Episódio',w:92},{t:'Deitar',w:36,align:'right'},{t:'Sono',w:36,align:'right'},{t:'Fim',w:36,align:'right'},
-    {t:'SOL',w:40,align:'right'},{t:'TIB',w:42,align:'right'},{t:'TST',w:42,align:'right'},{t:'WASO',w:42,align:'right'},
+    {t:'SOL',w:40,align:'right'},{t:'FPR',w:42,align:'right'},{t:'TTS',w:42,align:'right'},{t:'WASO',w:42,align:'right'},
     {t:'ES',w:40,align:'right'},{t:'Desp.',w:38,align:'right'},{t:'Frag./h',w:36,align:'right'}];
   const line = (label,m) => [label, fmt.clockT(tAt(m.a)), fmt.clockT(tAt(m.onset)), fmt.clockT(tAt(m.b+1)),
     fmt.hm(m.solMin), fmt.hm(m.tibMin), fmt.hm(m.tstMin), fmt.hm(m.wasoMin), fmt.pct(m.se),
@@ -2104,6 +2486,31 @@ function exportPDF(){
   }
   res.naps.forEach(x=>rows.push(line(fmt.date(tAt(x.m.a))+' (cochilo)', x.m)));
   doc.table(cols, rows, {wrap:[0]});
+  {
+    const lv = k => res.nights.filter(x=>x.m.evidHIS && x.m.evidHIS.nivel===k).length;
+    const lvF = k => res.nights.filter(x=>x.m.evidHFS && x.m.evidHFS.nivel===k).length;
+    doc.gap(4);
+    doc.para(`Decisão graduada do Consenso ABS (atividade + evento + luz + temperatura) — HIS: muito forte em ${lv('muito forte')}, forte em ${lv('forte')} e moderada em ${lv('moderado')} noite(s); HFS: ${lvF('muito forte')} / ${lvF('forte')} / ${lvF('moderado')}.`, {size:8});
+  }
+
+  doc.section('Triagem de transtornos do sono (CIDS-3-TR / Consenso ABS)');
+  doc.para('Sugestão de hipótese a partir do padrão actigráfico — o diagnóstico é clínico e exige diário de sono junto do registro; queixa, duração dos sintomas (≥ 3 meses) e prejuízo funcional não são verificáveis pelo actígrafo.', {size:8.2});
+  doc.gap(4);
+  const semSinais = [];
+  I.triagem.forEach(t=>{
+    if(t.status==='sem sinais actigráficos'){ semSinais.push(t.nome); return; }
+    doc.ensure(40);
+    doc.text(t.nome+' — '+t.status.toUpperCase(), {size:8.8, bold:true,
+      color: t.status==='compatível'? '0.72 0.18 0.16' : t.status==='possível'? '0.70 0.42 0.00' : '0.42 0.42 0.45'});
+    doc.y+=12;
+    t.criterios.forEach(cr=>doc.para((cr.met?'[x] ':'[  ] ')+cr.txt, {size:7.8}));
+    doc.para('Dependem da avaliação clínica: '+t.clinicos.join('; ')+'.'+(t.obs? ' '+t.obs:''), {size:7.4});
+    doc.gap(5);
+  });
+  if(semSinais.length){
+    doc.ensure(20);
+    doc.para('Sem sinais actigráficos: '+semSinais.join(' · ')+'.', {size:8, bold:true});
+  }
 
   doc.section('Notas metodológicas');
   const plain = h => h.replace(/<[^>]+>/g,'')
